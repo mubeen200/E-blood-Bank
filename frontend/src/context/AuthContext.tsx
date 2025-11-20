@@ -15,6 +15,16 @@ export interface AuthUser {
   email: string;
   role: Role;
   bloodType?: string;
+
+  // Common profile fields
+  phone?: string;
+  gender?: string;
+  cnic?: string;
+
+  // Donor-specific fields (used in donor pages)
+  age?: number;
+  weight?: number;
+  healthCondition?: string;
 }
 
 interface AuthContextValue {

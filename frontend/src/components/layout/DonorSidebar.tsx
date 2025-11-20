@@ -25,22 +25,19 @@ const items = [
     id: "history",
     label: "My Donations",
     icon: History,
-    path: "#",
-    disabled: true,
+    path: "/donor/history",
   },
   {
     id: "eligibility",
     label: "Eligibility Checker",
     icon: ShieldCheck,
-    path: "#",
-    disabled: true,
+    path: "/donor/eligibility",
   },
   {
     id: "profile",
     label: "Profile",
     icon: User,
-    path: "#",
-    disabled: true,
+    path: "/donor/profile", 
   },
   {
     id: "notifications",
@@ -78,7 +75,6 @@ export function DonorSidebar() {
             );
           }
 
-          // Active state: exact for /donor, startsWith for other paths
           const isDashboard = item.path === "/donor";
           const active = isDashboard
             ? pathname === "/donor"

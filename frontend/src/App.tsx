@@ -6,6 +6,11 @@ import { RegisterDonorPage } from "@/pages/auth/RegisterDonorPage";
 import { RegisterRecipientPage } from "@/pages/auth/RegisterRecipientPage";
 import { DonorDashboard } from "@/pages/Donor/DonorDashboard";
 import { DonateBloodPage } from "@/pages/Donor/DonateBloodPage";
+import { MyDonationsPage } from "@/pages/Donor/MyDonationsPage";
+import { DonorProfilePage } from "@/pages/Donor/DonorProfilePage";
+
+import { EligibilityCheckerPage } from "@/pages/Donor/EligibilityCheckerPage";
+
 import { useAuth } from "@/context/AuthContext";
 import type { ReactNode } from "react";
 
@@ -67,6 +72,34 @@ function App() {
     </ProtectedRoute>
   }
 />
+
+<Route
+  path="/donor/history"
+  element={
+    <ProtectedRoute allowedRole="DONOR">
+      <MyDonationsPage />
+    </ProtectedRoute>
+  }
+/>
+
+<Route
+  path="/donor/eligibility"
+  element={
+    <ProtectedRoute allowedRole="DONOR">
+      <EligibilityCheckerPage />
+    </ProtectedRoute>
+  }
+/>
+
+<Route
+  path="/donor/profile"
+  element={
+    <ProtectedRoute allowedRole="DONOR">
+      <DonorProfilePage />
+    </ProtectedRoute>
+  }
+/>
+
 
 
         {/* Fallback */}

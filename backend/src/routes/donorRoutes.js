@@ -5,6 +5,10 @@ const {
   getDonorAppointments,
   createDonationAppointment,
   cancelDonationAppointment,
+  getDonationHistory,
+  getDonorProfile,
+  updateDonorProfile,
+  changeDonorPassword,
 } = require("../controllers/donorController");
 const { auth, requireRole } = require("../middleware/authMiddleware");
 
@@ -18,5 +22,12 @@ router.get("/locations", getDonorLocations);
 router.get("/appointments", getDonorAppointments);
 router.post("/appointments", createDonationAppointment);
 router.patch("/appointments/:id/cancel", cancelDonationAppointment);
+
+router.get("/donations", getDonationHistory);
+
+// Profile
+router.get("/profile", getDonorProfile);
+router.put("/profile", updateDonorProfile);
+router.put("/change-password", changeDonorPassword);
 
 module.exports = router;

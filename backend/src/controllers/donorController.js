@@ -1,8 +1,16 @@
+const bcrypt = require("bcrypt");
 const DonationAppointment = require("../models/DonationAppointment");
 const BloodBankLocation = require("../models/BloodBankLocation");
 const User = require("../models/User");
 
 const BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+
+function sanitizeUserDoc(userDoc) {
+  const obj = userDoc.toObject();
+  delete obj.passwordHash;
+  delete obj.__v;
+  return obj;
+}
 
 function buildEligibility(user, nextEligibleDate) {
   const reasons = [];
@@ -40,7 +48,7 @@ function buildEligibility(user, nextEligibleDate) {
   return { eligible, reasons };
 }
 
-// Serialize appointment for frontend
+// Serialize appointment / donation for frontend
 function serializeAppointment(doc) {
   const obj = doc.toObject({ virtuals: false });
   const location = obj.location;
@@ -50,6 +58,7 @@ function serializeAppointment(doc) {
     date: obj.date,
     timeSlot: obj.timeSlot,
     status: obj.status,
+    unitsDonated: obj.unitsDonated ?? null,
     location: location
       ? {
           _id: location._id,
@@ -72,7 +81,6 @@ exports.getDonorOverview = async (req, res, next) => {
 
     let nextEligibleDate = user.nextEligibleDonationDate || null;
 
-    // Derive from last completed donation if not set
     if (!nextEligibleDate) {
       const lastDonation = await DonationAppointment.findOne({
         donor: userId,
@@ -83,7 +91,7 @@ exports.getDonorOverview = async (req, res, next) => {
 
       if (lastDonation && lastDonation.date) {
         const d = new Date(lastDonation.date);
-        d.setDate(d.getDate() + 56); // 8 weeks cooldown
+        d.setDate(d.getDate() + 56);
         nextEligibleDate = d;
         user.nextEligibleDonationDate = d;
         await user.save();
@@ -159,7 +167,7 @@ exports.getDonorLocations = async (req, res, next) => {
         name: loc.name,
         city: loc.city,
         address: loc.address,
-        distanceKm: loc.distanceKm, // optional field for later
+        distanceKm: loc.distanceKm,
         isRecommended,
         stockLevel,
       };
@@ -192,7 +200,6 @@ exports.getDonorAppointments = async (req, res, next) => {
 };
 
 // POST /api/donor/appointments
-// body: { locationId, date: 'YYYY-MM-DD', timeSlot }
 exports.createDonationAppointment = async (req, res, next) => {
   try {
     const { locationId, date, timeSlot } = req.body;
@@ -223,7 +230,6 @@ exports.createDonationAppointment = async (req, res, next) => {
         .json({ message: "You cannot book an appointment in the past." });
     }
 
-    // Eligibility re-check
     const user = await User.findById(req.user._id);
     const { eligible, reasons } = buildEligibility(
       user,
@@ -237,7 +243,6 @@ exports.createDonationAppointment = async (req, res, next) => {
       });
     }
 
-    // prevent double booking at same date/time
     const existing = await DonationAppointment.findOne({
       donor: user._id,
       date: selectedDate,
@@ -293,6 +298,143 @@ exports.cancelDonationAppointment = async (req, res, next) => {
     res.json({ appointment: serializeAppointment(appointment) });
   } catch (err) {
     console.error("cancelDonationAppointment error:", err);
+    next(err);
+  }
+};
+
+// GET /api/donor/donations?status=COMPLETED|CANCELLED|ALL
+exports.getDonationHistory = async (req, res, next) => {
+  try {
+    const rawStatus = (req.query.status || "COMPLETED").toUpperCase();
+
+    let statuses;
+    if (rawStatus === "ALL") {
+      statuses = ["COMPLETED", "CANCELLED"];
+    } else if (rawStatus === "CANCELLED") {
+      statuses = ["CANCELLED"];
+    } else {
+      statuses = ["COMPLETED"];
+    }
+
+    const donations = await DonationAppointment.find({
+      donor: req.user._id,
+      status: { $in: statuses },
+    })
+      .sort({ date: -1 })
+      .populate("location", "name city")
+      .exec();
+
+    const mapped = donations.map(serializeAppointment);
+
+    res.json({ donations: mapped });
+  } catch (err) {
+    console.error("getDonationHistory error:", err);
+    next(err);
+  }
+};
+
+// GET /api/donor/profile
+exports.getDonorProfile = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "Donor not found." });
+    }
+    res.json({ user: sanitizeUserDoc(user) });
+  } catch (err) {
+    console.error("getDonorProfile error:", err);
+    next(err);
+  }
+};
+
+// PUT /api/donor/profile
+exports.updateDonorProfile = async (req, res, next) => {
+  try {
+    const {
+      name,
+      phone,
+      gender,
+      cnic,
+      age,
+      weight,
+      healthCondition,
+      // bloodType, // optionally allow later
+    } = req.body;
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "Donor not found." });
+    }
+
+    if (typeof name === "string" && name.trim()) user.name = name.trim();
+    if (typeof phone === "string") user.phone = phone.trim();
+    if (typeof gender === "string") user.gender = gender;
+    if (typeof cnic === "string") user.cnic = cnic.trim();
+    if (typeof healthCondition === "string")
+      user.healthCondition = healthCondition.trim();
+
+    if (age !== undefined && age !== null && age !== "") {
+      const ageNum = Number(age);
+      if (!Number.isNaN(ageNum) && ageNum > 0 && ageNum < 120) {
+        user.age = ageNum;
+      }
+    }
+
+    if (weight !== undefined && weight !== null && weight !== "") {
+      const weightNum = Number(weight);
+      if (!Number.isNaN(weightNum) && weightNum > 0 && weightNum < 300) {
+        user.weight = weightNum;
+      }
+    }
+
+    // If you want donors to change bloodType, uncomment and validate:
+    // if (bloodType && BLOOD_TYPES.includes(bloodType)) {
+    //   user.bloodType = bloodType;
+    // }
+
+    await user.save();
+
+    res.json({ user: sanitizeUserDoc(user) });
+  } catch (err) {
+    console.error("updateDonorProfile error:", err);
+    next(err);
+  }
+};
+
+// PUT /api/donor/change-password
+exports.changeDonorPassword = async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res
+        .status(400)
+        .json({ message: "Current and new password are required." });
+    }
+
+    if (newPassword.length < 8) {
+      return res
+        .status(400)
+        .json({ message: "New password must be at least 8 characters." });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "Donor not found." });
+    }
+
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) {
+      return res.status(400).json({ message: "Current password is incorrect." });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    user.passwordHash = hash;
+    await user.save();
+
+    res.json({ message: "Password updated successfully." });
+  } catch (err) {
+    console.error("changeDonorPassword error:", err);
     next(err);
   }
 };
