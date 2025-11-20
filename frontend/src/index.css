@@ -1,0 +1,18 @@
+/* Tailwind 4 base + utilities */
+@import "tailwindcss";
+
+/* Shadcn / animation plugin (optional but fine) */
+@plugin "tailwindcss-animate";
+
+/* Dark mode variant (for later if you want) */
+@custom-variant dark (&:is(.dark *));
+
+/* Global base styles */
+@layer base {
+  body {
+    /* Dark background, white text – we can tweak colors later */
+    @apply bg-slate-950 text-slate-50 antialiased;
+  }
+}
+
+/* Add any of your own CSS below if needed */
