@@ -2,6 +2,8 @@ const bcrypt = require("bcrypt");
 const DonationAppointment = require("../models/DonationAppointment");
 const BloodBankLocation = require("../models/BloodBankLocation");
 const User = require("../models/User");
+const Notification = require("../models/Notification");
+
 
 const BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
@@ -264,6 +266,25 @@ exports.createDonationAppointment = async (req, res, next) => {
     });
 
     const populated = await appointment.populate("location", "name city");
+    // Create notification for booked appointment
+try {
+  await Notification.create({
+    user: user._id,
+    role: "DONOR",
+    type: "APPOINTMENT_BOOKED",
+    title: "Donation appointment booked",
+    message: `Your appointment at ${location.name} on ${selectedDate.toLocaleDateString()} at ${timeSlot} has been booked.`,
+    meta: {
+      appointmentId: appointment._id,
+      locationName: location.name,
+      date: appointment.date,
+      timeSlot,
+    },
+  });
+} catch (notifyErr) {
+  console.error("Failed to create booking notification:", notifyErr);
+}
+
 
     res.status(201).json({ appointment: serializeAppointment(populated) });
   } catch (err) {
@@ -294,6 +315,27 @@ exports.cancelDonationAppointment = async (req, res, next) => {
 
     appointment.status = "CANCELLED";
     await appointment.save();
+    // Notification for cancelled appointment
+try {
+  await Notification.create({
+    user: req.user._id,
+    role: "DONOR",
+    type: "APPOINTMENT_CANCELLED",
+    title: "Donation appointment cancelled",
+    message: `Your appointment at ${
+      appointment.location?.name || "the blood bank"
+    } on ${appointment.date.toLocaleDateString()} has been cancelled.`,
+    meta: {
+      appointmentId: appointment._id,
+      locationName: appointment.location?.name,
+      date: appointment.date,
+      timeSlot: appointment.timeSlot,
+    },
+  });
+} catch (notifyErr) {
+  console.error("Failed to create cancel notification:", notifyErr);
+}
+
 
     res.json({ appointment: serializeAppointment(appointment) });
   } catch (err) {
@@ -438,3 +480,73 @@ exports.changeDonorPassword = async (req, res, next) => {
     next(err);
   }
 };
+
+// GET /api/donor/notifications?onlyUnread=true
+exports.getDonorNotifications = async (req, res, next) => {
+  try {
+    const onlyUnread =
+      String(req.query.onlyUnread || "").toLowerCase() === "true";
+
+    const filter = {
+      user: req.user._id,
+      role: "DONOR",
+    };
+
+    if (onlyUnread) {
+      filter.isRead = false;
+    }
+
+    const notifications = await Notification.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+
+    res.json({ notifications });
+  } catch (err) {
+    console.error("getDonorNotifications error:", err);
+    next(err);
+  }
+};
+
+// PATCH /api/donor/notifications/:id/read
+exports.markNotificationRead = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const notif = await Notification.findOneAndUpdate(
+      { _id: id, user: req.user._id, role: "DONOR" },
+      { $set: { isRead: true } },
+      { new: true }
+    ).lean();
+
+    if (!notif) {
+      return res.status(404).json({ message: "Notification not found." });
+    }
+
+    res.json({ notification: notif });
+  } catch (err) {
+    console.error("markNotificationRead error:", err);
+    next(err);
+  }
+};
+
+// PATCH /api/donor/notifications/mark-all-read
+exports.markAllNotificationsRead = async (req, res, next) => {
+  try {
+    const result = await Notification.updateMany(
+      { user: req.user._id, role: "DONOR", isRead: false },
+      { $set: { isRead: true } }
+    );
+
+    res.json({
+      updatedCount:
+        result.modifiedCount !== undefined
+          ? result.modifiedCount
+          : result.nModified || 0,
+    });
+  } catch (err) {
+    console.error("markAllNotificationsRead error:", err);
+    next(err);
+  }
+};
+

@@ -9,7 +9,11 @@ const {
   getDonorProfile,
   updateDonorProfile,
   changeDonorPassword,
+  getDonorNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
 } = require("../controllers/donorController");
+
 const { auth, requireRole } = require("../middleware/authMiddleware");
 
 const router = express.Router();
@@ -29,5 +33,11 @@ router.get("/donations", getDonationHistory);
 router.get("/profile", getDonorProfile);
 router.put("/profile", updateDonorProfile);
 router.put("/change-password", changeDonorPassword);
+
+// Notifications
+router.get("/notifications", getDonorNotifications);
+router.patch("/notifications/:id/read", markNotificationRead);
+router.patch("/notifications/mark-all-read", markAllNotificationsRead);
+
 
 module.exports = router;

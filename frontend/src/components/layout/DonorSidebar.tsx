@@ -38,13 +38,14 @@ const items = [
     label: "Profile",
     icon: User,
     path: "/donor/profile", 
+    disabled: false,
   },
   {
     id: "notifications",
     label: "Notifications",
     icon: Bell,
-    path: "#",
-    disabled: true,
+    path: "/donor/notifications",
+    disabled: false,
   },
 ];
 

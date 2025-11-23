@@ -2,55 +2,52 @@ require("dotenv").config();
 const express = require("express");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
-const morgan = require("morgan");
-
 const connectDB = require("./config/db");
-const { errorHandler } = require("./middleware/errorHandler");
-const seedAdmin = require("./utils/seedAdmin");
-
 const authRoutes = require("./routes/authRoutes");
 const donorRoutes = require("./routes/donorRoutes");
+const recipientRoutes = require("./routes/recipientRoutes");
+const seedAdmin = require("./utils/seedAdmin");
 
 const app = express();
 
-// Connect DB & seed admin
-connectDB()
-  .then(async () => {
-    await seedAdmin();
-    console.log("MongoDB connected");
-    app.listen(PORT, () =>
-      console.log(`Server running on http://localhost:${PORT}`)
-    );
-  })
-  .catch((err) => {
-    console.error("DB connection failed", err);
-    process.exit(1);
-  });
-
-
-// Middleware
+app.use(express.json());
+app.use(cookieParser());
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:5174"],
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
     credentials: true,
   })
 );
 
-app.use(express.json());
-app.use(cookieParser());
-app.use(morgan("dev"));
-
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/donor", donorRoutes);
+app.use("/api/recipient", recipientRoutes);
 
-// Health check
+// Basic health check
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// Error handler
-app.use(errorHandler);
+// Global error handler
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res
+    .status(err.status || 500)
+    .json({ message: err.message || "Internal server error" });
+});
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+connectDB()
+  .then(seedAdmin)
+  .then(() => {
+    app.listen(PORT, () =>
+      console.log(`API server running on http://localhost:${PORT}`)
+    );
+  })
+  .catch((err) => {
+    console.error("Failed to start server", err);
+    process.exit(1);
+  });

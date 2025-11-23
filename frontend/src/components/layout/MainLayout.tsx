@@ -28,12 +28,29 @@ export function MainLayout({ children }: MainLayoutProps) {
         : "text-slate-100/80 hover:text-white/90",
     ].join(" ");
 
+  const notificationPath = !user
+    ? "/login"
+    : user.role === "DONOR"
+    ? "/donor/notifications"
+    : user.role === "RECIPIENT"
+    ? "/recipient/notifications"
+    : "/";
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-white">
       <header className="border-b border-slate-800 bg-gradient-to-r from-red-700 via-red-600 to-blue-700">
         <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 gap-4">
           {/* Logo + brand */}
-          <Link to={isAuthenticated && user?.role === "DONOR" ? "/donor" : "/"} className="flex items-center gap-3">
+          <Link
+            to={
+              isAuthenticated && user?.role === "DONOR"
+                ? "/donor"
+                : isAuthenticated && user?.role === "RECIPIENT"
+                ? "/recipient"
+                : "/"
+            }
+            className="flex items-center gap-3"
+          >
             <img
               src="/logo.png"
               alt="E-BloodBank Logo"
@@ -72,14 +89,15 @@ export function MainLayout({ children }: MainLayoutProps) {
           <div className="flex items-center gap-3">
             {isAuthenticated ? (
               <>
-                {/* Notification bell */}
-                <button
+                {/* Notification bell → opens correct notifications page */}
+                <Link
+                  to={notificationPath}
                   className="relative rounded-full bg-white/10 p-2 hover:bg-white/20 border border-white/30"
                   aria-label="Notifications"
                 >
                   <Bell className="h-4 w-4" />
                   <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-amber-400 border border-slate-900" />
-                </button>
+                </Link>
 
                 <Button
                   onClick={logout}

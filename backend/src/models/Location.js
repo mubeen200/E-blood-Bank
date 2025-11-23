@@ -9,7 +9,7 @@ const inventorySchema = new Schema(
     "AB+": { type: Number, default: 0 },
     "AB-": { type: Number, default: 0 },
     "O+": { type: Number, default: 0 },
-    "O-": { type: Number, default: 0 }
+    "O-": { type: Number, default: 0 },
   },
   { _id: false }
 );
@@ -20,9 +20,10 @@ const locationSchema = new Schema(
     address: { type: String },
     city: { type: String },
     contactNumber: { type: String },
-    inventory: { type: inventorySchema, default: () => ({}) }
+     inventory: { type: Schema.Types.Mixed, default: [] },
   },
   { timestamps: true }
 );
 
-module.exports = model("Location", locationSchema);
+// 👇 third argument tells Mongoose which collection name to use
+module.exports = model("Location", locationSchema, "bloodbanklocations");
