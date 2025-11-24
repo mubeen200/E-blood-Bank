@@ -2,12 +2,12 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
-const signToken = (user) => {
-  const payload = { id: user._id, role: user.role };
-  return jwt.sign(payload, process.env.JWT_SECRET || "devsecret", {
+const JWT_SECRET = process.env.JWT_SECRET || "devsecret";
+
+const signToken = (user) =>
+  jwt.sign({ id: user._id, role: user.role }, JWT_SECRET, {
     expiresIn: "7d",
   });
-};
 
 const sendAuthCookie = (res, token) => {
   res.cookie("token", token, {
@@ -165,49 +165,64 @@ exports.registerRecipient = async (req, res, next) => {
 // body: { email, password, role? }
 exports.login = async (req, res, next) => {
   try {
+    console.log("🔐 /api/auth/login body:", req.body);
+
     const { email, password, role } = req.body;
 
     if (!email || !password) {
+      console.log("⛔ Missing email or password");
       return res
         .status(400)
         .json({ message: "Email and password are required." });
     }
 
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ message: "Invalid email or password." });
-    }
+    const normalizedEmail = String(email).trim().toLowerCase();
 
-    // Optional: make sure selected role matches stored role
-    if (role && role !== user.role) {
+    // Find user ONLY by email (we'll *optionally* compare role later)
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      console.log("⛔ No user found for email:", normalizedEmail);
       return res
         .status(400)
-        .json({ message: `This account is not a ${role.toLowerCase()}.` });
+        .json({ message: "Incorrect email or password.", code: "NO_USER" });
     }
 
-    // ✅ Password check – support `passwordHash` (new) and `password` (old)
-    let valid = false;
-
-    if (user.passwordHash) {
-      valid = await bcrypt.compare(password, user.passwordHash);
-    } else if (user.password) {
-      // in case old docs stored bcrypt hash in `password`
-      valid = await bcrypt.compare(password, user.password);
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) {
+      console.log("⛔ Invalid password for:", normalizedEmail);
+      return res
+        .status(400)
+        .json({ message: "Incorrect email or password.", code: "BAD_PASSWORD" });
     }
 
-    if (!valid) {
-      return res.status(400).json({ message: "Invalid email or password." });
+    // OPTIONAL – if frontend sends role, we check for mismatch
+    if (role && role !== user.role) {
+      console.log(
+        `⚠️ Role mismatch when logging in: client=${role}, actual=${user.role} for ${normalizedEmail}`
+      );
+      return res.status(400).json({
+        message: `This account is registered as ${user.role}, but you selected ${role}.`,
+        code: "ROLE_MISMATCH",
+        actualRole: user.role,
+      });
     }
 
+    // Use the same helpers you already have
     const token = signToken(user);
     sendAuthCookie(res, token);
 
-    res.json({ user: sanitizeUser(user) });
+    console.log("✅ Login success for", normalizedEmail, "role:", user.role);
+
+    return res.json({ user: sanitizeUser(user) });
   } catch (err) {
-    console.error("login error", err);
+    console.error("Login error:", err);
     next(err);
   }
 };
+
+
+
 
 
 // POST /api/auth/logout

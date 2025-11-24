@@ -7,7 +7,7 @@ async function seedAdmin() {
     if (existing) return;
 
     const email = process.env.ADMIN_EMAIL || "admin@ebloodbank.com";
-    const password = process.env.ADMIN_PASSWORD || "admin123";
+    const password = process.env.ADMIN_PASSWORD || "Admin123!";
 
     const passwordHash = await bcrypt.hash(password, 10);
 

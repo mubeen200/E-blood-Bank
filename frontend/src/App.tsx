@@ -21,6 +21,9 @@ import { RecipientEmergencyRequestsPage } from "@/pages/Recipient/RecipientEmerg
 import { RecipientProfilePage } from "@/pages/Recipient/RecipientProfilePage";
 import { RecipientNotificationsPage } from "@/pages/Recipient/RecipientNotificationsPage";
 
+import { AdminDashboard } from "@/pages/Admin/AdminDashboard";
+import { AdminDonorsPage } from "@/pages/Admin/AdminDonorsPage";
+
 
 
 
@@ -166,6 +169,26 @@ export default function App() {
   element={
     <ProtectedRoute allowedRole="RECIPIENT">
       <RecipientNotificationsPage />
+    </ProtectedRoute>
+  }
+/>
+
+
+{/* Admin area */}
+<Route
+  path="/admin"
+  element={
+    <ProtectedRoute allowedRole="ADMIN">
+      <AdminDashboard />
+    </ProtectedRoute>
+  }
+/>
+
+<Route
+  path="/admin/donors"
+  element={
+    <ProtectedRoute allowedRole="ADMIN">
+      <AdminDonorsPage />
     </ProtectedRoute>
   }
 />

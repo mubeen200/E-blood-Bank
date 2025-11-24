@@ -10,10 +10,15 @@ const { auth } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
+// Donor / recipient registration
 router.post("/register-donor", registerDonor);
 router.post("/register-recipient", registerRecipient);
-router.post("/login", login);
+
+// Login / logout
+router.post("/login", login);          // <-- LOGIN IS POST HERE
 router.post("/logout", logout);
+
+// Current user
 router.get("/me", auth, getMe);
 
 module.exports = router;

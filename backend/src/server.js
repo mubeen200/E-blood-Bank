@@ -7,6 +7,8 @@ const authRoutes = require("./routes/authRoutes");
 const donorRoutes = require("./routes/donorRoutes");
 const recipientRoutes = require("./routes/recipientRoutes");
 const seedAdmin = require("./utils/seedAdmin");
+const adminRoutes = require("./routes/adminRoutes");
+
 
 const app = express();
 
@@ -23,6 +25,7 @@ app.use(
 app.use("/api/auth", authRoutes);
 app.use("/api/donor", donorRoutes);
 app.use("/api/recipient", recipientRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Basic health check
 app.get("/api/health", (req, res) => {
