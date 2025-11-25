@@ -23,6 +23,10 @@ import { RecipientNotificationsPage } from "@/pages/Recipient/RecipientNotificat
 
 import { AdminDashboard } from "@/pages/Admin/AdminDashboard";
 import { AdminDonorsPage } from "@/pages/Admin/AdminDonorsPage";
+import { AdminRecipientsPage } from "@/pages/Admin/AdminRecipientsPage";
+import { AdminInventoryPage } from "@/pages/Admin/AdminInventoryPage";
+import { AdminDonationRecordsPage } from "@/pages/Admin/AdminDonationRecordsPage";
+import { AdminReportsPage } from "@/pages/Admin/AdminReportsPage";
 
 
 
@@ -192,6 +196,42 @@ export default function App() {
     </ProtectedRoute>
   }
 />
+<Route
+  path="/admin/recipients"
+  element={
+    <ProtectedRoute allowedRole="ADMIN">
+      <AdminRecipientsPage />
+    </ProtectedRoute>
+  }
+/>
+
+<Route
+  path="/admin/inventory"
+  element={
+    <ProtectedRoute allowedRole="ADMIN">
+      <AdminInventoryPage />
+    </ProtectedRoute>
+  }
+/>
+
+<Route
+  path="/admin/donations"
+  element={
+    <ProtectedRoute allowedRole="ADMIN">
+      <AdminDonationRecordsPage />
+    </ProtectedRoute>
+  }
+/>
+
+<Route
+  path="/admin/reports"
+  element={
+    <ProtectedRoute allowedRole="ADMIN">
+      <AdminReportsPage />
+    </ProtectedRoute>
+  }
+/>
+
 
 
         {/* Fallback */}

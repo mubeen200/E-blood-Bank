@@ -5,6 +5,11 @@ const {
   getAdminDashboardStats,
   getAdminDonorsList,
   markDonationAppointmentCompleted,
+  getAdminRecipientsList,
+  adminUpdateRequestStatus,
+  getAdminInventoryByLocation,
+  getDonationRecords, 
+  getAdminReportsAnalytics,// 👈 NEW
 } = require("../controllers/adminController");
 
 const router = express.Router();
@@ -26,6 +31,39 @@ router.patch(
   auth,
   requireRole("ADMIN"),
   markDonationAppointmentCompleted
+);
+
+// Admin: manage recipients
+router.get("/recipients", auth, requireRole("ADMIN"), getAdminRecipientsList);
+
+// Admin: approve / reject / complete blood request
+router.patch(
+  "/requests/:id/status",
+  auth,
+  requireRole("ADMIN"),
+  adminUpdateRequestStatus
+);
+
+// Admin: inventory per location
+router.get(
+  "/inventory",
+  auth,
+  requireRole("ADMIN"),
+  getAdminInventoryByLocation
+);
+
+router.get(
+  "/donations",
+  auth,
+  requireRole("ADMIN"),
+  getDonationRecords
+);
+
+router.get(
+  "/reports",
+  auth,
+  requireRole("ADMIN"),
+  getAdminReportsAnalytics
 );
 
 module.exports = router;
