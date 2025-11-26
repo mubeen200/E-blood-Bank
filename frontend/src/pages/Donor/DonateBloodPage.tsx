@@ -229,8 +229,8 @@ export function DonateBloodPage() {
                   </span>
                 ) : (
                   <span className="inline-flex items-center rounded-full bg-amber-500/15 border border-amber-400/60 px-3 py-1 text-amber-100">
-                    Not currently eligible – booking is restricted before the
-                    eligible date.
+                    You are not eligible to donate today, but you can book an
+    appointment on or after your eligible date.
                   </span>
                 )}
               </div>

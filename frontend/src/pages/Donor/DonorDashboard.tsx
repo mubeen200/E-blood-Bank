@@ -3,7 +3,6 @@ import api from "@/api/axiosClient";
 import { useAuth } from "@/context/AuthContext";
 import { DonorSidebar } from "@/components/layout/DonorSidebar";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
   CalendarDays,
@@ -44,7 +43,7 @@ export function DonorDashboard() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // --------- data loading (fixed) ----------
+  // --------- data loading ---------- //
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -76,7 +75,6 @@ export function DonorDashboard() {
           );
         }
 
-        // Only show toast if *everything* failed:
         if (!anySuccess) {
           toast.error("Failed to load donor dashboard.");
         }
@@ -91,7 +89,7 @@ export function DonorDashboard() {
     load();
   }, []);
 
-  // --------- helpers ----------
+  // --------- helpers ---------- //
   const formatDate = (value: string) =>
     new Date(value).toLocaleDateString(undefined, {
       year: "numeric",
@@ -143,7 +141,39 @@ export function DonorDashboard() {
   const eligible = overview?.eligibility.eligible ?? false;
   const reasons = overview?.eligibility.reasons ?? [];
 
-  // --------- UI ----------
+  // --- badge logic --- //
+  const badges = [
+    {
+      id: "first",
+      title: "First Donation",
+      description: "Complete your very first blood donation.",
+      threshold: 1,
+    },
+    {
+      id: "bronze",
+      title: "Bronze Donor",
+      description: "Reach 5 successful donations.",
+      threshold: 5,
+    },
+    {
+      id: "silver",
+      title: "Silver Donor",
+      description: "Hit 10+ donations – a consistent life saver.",
+      threshold: 10,
+    },
+    {
+      id: "gold",
+      title: "Gold Hero",
+      description: "20+ donations – a true community hero.",
+      threshold: 20,
+    },
+  ];
+
+  const earnedCount = badges.filter(
+    (b) => totalDonations >= b.threshold
+  ).length;
+
+  // --------- UI ---------- //
   return (
     <div className="flex gap-6">
       <DonorSidebar />
@@ -166,23 +196,45 @@ export function DonorDashboard() {
         {/* Top stats */}
         <section className="grid gap-4 lg:grid-cols-4">
           {/* Eligibility */}
-          <Card className="p-4 bg-red-900/70 border-red-600 text-white">
+          <Card
+            className={[
+              "p-4 text-white",
+              eligible
+                ? "bg-emerald-900/80 border border-emerald-500"
+                : "bg-red-900/80 border border-red-600",
+            ].join(" ")}
+          >
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs font-semibold uppercase">
                 Eligibility
               </div>
-              <ShieldAlert className="h-4 w-4 text-red-200" />
+              <ShieldAlert
+                className={
+                  "h-4 w-4 " +
+                  (eligible ? "text-emerald-200" : "text-red-200")
+                }
+              />
             </div>
             <div className="text-sm font-semibold mb-1">
-              {eligible ? "Currently eligible" : "Not currently eligible"}
+              {eligible
+                ? "You are currently eligible to donate"
+                : "Not currently eligible to donate"}
             </div>
-            <ul className="text-[11px] space-y-1 text-red-100/90">
-              {reasons.length === 0 ? (
-                <li>• No issues detected with your saved data.</li>
-              ) : (
-                reasons.map((r, idx) => <li key={idx}>• {r}</li>)
-              )}
-            </ul>
+
+            {eligible ? (
+              <p className="text-[11px] text-emerald-100/90">
+                Your saved details look good. You can book a donation
+                appointment on a suitable date.
+              </p>
+            ) : (
+              <ul className="text-[11px] space-y-1 text-red-100/90">
+                {reasons.length === 0 ? (
+                  <li>• Please review your profile details and health.</li>
+                ) : (
+                  reasons.map((r, idx) => <li key={idx}>• {r}</li>)
+                )}
+              </ul>
+            )}
           </Card>
 
           {/* Next eligible date */}
@@ -193,9 +245,12 @@ export function DonorDashboard() {
               </div>
               <CalendarDays className="h-4 w-4 text-blue-200" />
             </div>
-            <div className="text-sm font-semibold mb-1">{nextEligibleText}</div>
+            <div className="text-sm font-semibold mb-1">
+              {nextEligibleText}
+            </div>
             <p className="text-[11px] text-slate-300">
-              This date updates automatically after every completed donation.
+              This date updates automatically after every completed
+              donation.
             </p>
           </Card>
 
@@ -238,67 +293,55 @@ export function DonorDashboard() {
                   Your badges
                 </div>
                 <p className="text-[11px] text-slate-300">
-                  Earn new milestones as you keep donating.
+                  Unlock milestones as you keep donating.
                 </p>
               </div>
               <div className="flex items-center gap-1 text-xs text-slate-300">
                 <Sparkles className="h-3 w-3 text-yellow-300" />
-                <span>{Math.min(totalDonations, 4)}/4 earned</span>
+                <span>
+                  {earnedCount}/{badges.length} earned
+                </span>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3 mt-2">
-              {/* First Donation */}
-              <div className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-3 flex flex-col justify-between">
-                <div className="text-xs font-semibold mb-1">
-                  First Donation
-                </div>
-                <p className="text-[11px] text-slate-300">
-                  Complete your very first blood donation.
-                </p>
-                <div className="mt-2 text-[10px] text-slate-400">
-                  Unlock at 1 donation
-                </div>
-              </div>
-
-              {/* Bronze */}
-              <div className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-3 flex flex-col justify-between">
-                <div className="text-xs font-semibold mb-1">
-                  Bronze Donor
-                </div>
-                <p className="text-[11px] text-slate-300">
-                  5 successful donations recorded.
-                </p>
-                <div className="mt-2 text-[10px] text-slate-400">
-                  Unlock at 5 donations
-                </div>
-              </div>
-
-              {/* Silver */}
-              <div className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-3 flex flex-col justify-between">
-                <div className="text-xs font-semibold mb-1">
-                  Silver Donor
-                </div>
-                <p className="text-[11px] text-slate-300">
-                  10+ donations — a consistent life saver.
-                </p>
-                <div className="mt-2 text-[10px] text-slate-400">
-                  Unlock at 10 donations
-                </div>
-              </div>
-
-              {/* Gold */}
-              <div className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-3 flex flex-col justify-between">
-                <div className="text-xs font-semibold mb-1">
-                  Gold Hero
-                </div>
-                <p className="text-[11px] text-slate-300">
-                  20+ donations — a true community hero.
-                </p>
-                <div className="mt-2 text-[10px] text-slate-400">
-                  Unlock at 20 donations
-                </div>
-              </div>
+              {badges.map((badge) => {
+                const unlocked = totalDonations >= badge.threshold;
+                return (
+                  <div
+                    key={badge.id}
+                    className={[
+                      "rounded-xl px-3 py-3 flex flex-col justify-between border",
+                      unlocked
+                        ? "border-amber-400 bg-amber-500/10 shadow-[0_0_0_1px_rgba(251,191,36,0.3)]"
+                        : "border-slate-700 bg-slate-950/70 opacity-80",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-xs font-semibold">
+                        {badge.title}
+                      </div>
+                      <span
+                        className={[
+                          "text-[10px] px-2 py-0.5 rounded-full border",
+                          unlocked
+                            ? "border-amber-300 text-amber-200 bg-amber-500/10"
+                            : "border-slate-500 text-slate-300 bg-slate-700/30",
+                        ].join(" ")}
+                      >
+                        {unlocked ? "Unlocked" : "Locked"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      {badge.description}
+                    </p>
+                    <div className="mt-2 text-[10px] text-slate-400">
+                      Unlock at {badge.threshold} donation
+                      {badge.threshold > 1 ? "s" : ""}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </Card>
 
@@ -318,8 +361,8 @@ export function DonorDashboard() {
 
             {monthlyTrend.length === 0 ? (
               <p className="text-xs text-slate-400 mt-2">
-                No donation statistics yet. Once donations are recorded, your
-                activity will appear here.
+                No donation statistics yet. Once donations are recorded,
+                your activity will appear here.
               </p>
             ) : (
               <div className="mt-3 space-y-2">
@@ -348,35 +391,7 @@ export function DonorDashboard() {
             )}
           </Card>
         </section>
-
-        {/* Matching recipient requests – placeholder (no API yet) */}
-        <section>
-          <Card className="p-4 bg-slate-900/90 border-slate-700 text-white">
-            <div className="flex items-center justify-between mb-1">
-              <div className="text-xs font-semibold uppercase">
-                Matching recipient requests
-              </div>
-              <span className="text-[10px] uppercase text-slate-400">
-                Coming soon
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-300">
-              Later we’ll connect your blood type to real-time patient
-              requests. For now, this area gives you a quick summary once that
-              feature is live.
-            </p>
-            <div className="mt-3">
-              <Button
-                type="button"
-                size="sm"
-                disabled
-                className="bg-red-600/70 hover:bg-red-600 cursor-not-allowed"
-              >
-                View matching requests (soon)
-              </Button>
-            </div>
-          </Card>
-        </section>
+        {/* Bottom "coming soon" section removed for a cleaner dashboard */}
       </div>
     </div>
   );

@@ -23,6 +23,11 @@ export function Footer() {
           <h3 className="font-semibold mb-2">Platform</h3>
           <ul className="space-y-1 text-slate-400">
             <li>
+              <Link to="/about" className="hover:text-slate-200">
+                About us
+              </Link>
+            </li>
+            <li>
               <Link to="/how-it-works" className="hover:text-slate-200">
                 How it works
               </Link>
@@ -48,7 +53,11 @@ export function Footer() {
         <div>
           <h3 className="font-semibold mb-2">Support</h3>
           <ul className="space-y-1 text-slate-400">
-            <li>Help &amp; FAQs (coming soon)</li>
+            <li>
+              <Link to="/help" className="hover:text-slate-200">
+                Help &amp; FAQs
+              </Link>
+            </li>
             <li>Safety guidelines</li>
             <li>Privacy &amp; data protection</li>
           </ul>
@@ -63,7 +72,7 @@ export function Footer() {
         </div>
       </div>
       <div className="border-t border-slate-800 py-3 text-center text-xs text-slate-500">
-        © {new Date().getFullYear()} E-BloodBank. Built for learning & practice.
+        © {new Date().getFullYear()} E-BloodBank.
       </div>
     </footer>
   );

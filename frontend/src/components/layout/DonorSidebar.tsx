@@ -37,7 +37,7 @@ const items = [
     id: "profile",
     label: "Profile",
     icon: User,
-    path: "/donor/profile", 
+    path: "/donor/profile",
     disabled: false,
   },
   {
@@ -50,11 +50,10 @@ const items = [
 ];
 
 export function DonorSidebar() {
-  const location = useLocation();
-  const pathname = location.pathname;
+  const { pathname } = useLocation();
 
   return (
-    <aside className="hidden md:flex md:flex-col w-56 shrink-0 rounded-2xl bg-gradient-to-b from-red-800 via-red-700 to-blue-800 border border-red-500/50 shadow-xl text-white p-4 gap-4">
+    <aside className="hidden md:flex md:flex-col w-56 shrink-0 rounded-2xl bg-gradient-to-b from-red-800 via-red-700 to-blue-800 border border-red-500/50 shadow-xl text-white p-4 gap-4 min-h-[640px]">
       <div className="text-xs uppercase tracking-wide text-red-100/80">
         Donor Portal
       </div>
@@ -102,7 +101,7 @@ export function DonorSidebar() {
       <div className="mt-auto rounded-xl bg-black/20 border border-white/20 p-3 text-xs text-red-50">
         <div className="font-semibold mb-1">Need help?</div>
         <div className="text-[11px] text-red-100/80">
-          We’ll later add FAQs & contact for your blood bank here.
+          We’ll later add FAQs &amp; contact details for your blood bank here.
         </div>
       </div>
     </aside>

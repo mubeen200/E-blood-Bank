@@ -9,9 +9,7 @@ export function LandingPage() {
       {/* HERO */}
       <section className="grid gap-10 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] items-center">
         <div className="space-y-5">
-          <Badge className="bg-red-600/90 text-white border-red-400/80">
-            New • E-BloodBank v1.0
-          </Badge>
+          
 
           <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold leading-tight">
             A smarter way to manage{" "}

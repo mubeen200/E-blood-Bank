@@ -20,12 +20,13 @@ try {
  */
 async function getAdminDashboardStats(req, res, next) {
   try {
-    // Basic counts
+    // --- Basic counts -------------------------------------------------------
     const [
       totalDonors,
       totalRecipients,
       totalActiveRequests,
       emergencyActiveCount,
+      pendingHighUrgencyCount,
     ] = await Promise.all([
       User.countDocuments({ role: "DONOR" }),
       User.countDocuments({ role: "RECIPIENT" }),
@@ -36,25 +37,64 @@ async function getAdminDashboardStats(req, res, next) {
         isEmergency: true,
         status: { $in: ["PENDING", "APPROVED"] },
       }),
+      Request.countDocuments({
+        status: "PENDING",
+        urgency: "HIGH",
+      }),
     ]);
 
-    // Successful donations (if Donation model exists)
-    let totalSuccessfulDonations = 0;
-    let recentDonationDocs = [];
-    if (Donation) {
-      totalSuccessfulDonations = await Donation.countDocuments({
-        status: { $in: ["COMPLETED", "FULFILLED"] },
-      });
+    // --- Request status breakdown (all requests) ---------------------------
+    const statusAgg = await Request.aggregate([
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
 
-      recentDonationDocs = await Donation.find({})
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .populate("donor", "name bloodType")
-        .populate("location", "name city")
-        .lean();
+    const requestStatusCounts = {
+      PENDING: 0,
+      APPROVED: 0,
+      FULFILLED: 0,
+      REJECTED: 0,
+      CANCELLED: 0,
+    };
+
+    for (const row of statusAgg) {
+      if (
+        row._id &&
+        Object.prototype.hasOwnProperty.call(requestStatusCounts, row._id)
+      ) {
+        requestStatusCounts[row._id] = row.count;
+      }
     }
 
-    // Recent emergency requests
+    const totalRequests =
+      requestStatusCounts.PENDING +
+      requestStatusCounts.APPROVED +
+      requestStatusCounts.FULFILLED +
+      requestStatusCounts.REJECTED +
+      requestStatusCounts.CANCELLED;
+
+    // --- Donation stats from DonationAppointment ---------------------------
+    let totalSuccessfulDonations = 0;
+    let recentDonationDocs = [];
+
+    totalSuccessfulDonations = await DonationAppointment.countDocuments({
+      status: "COMPLETED",
+    });
+
+    recentDonationDocs = await DonationAppointment.find({
+      status: "COMPLETED",
+    })
+      .sort({ date: -1, createdAt: -1 })
+      .limit(5)
+      .populate("donor", "name bloodType")
+      .populate("location", "name city")
+      .lean();
+
+    // --- Recent emergency requests -----------------------------------------
     const recentEmergencyDocs = await Request.find({
       isEmergency: true,
     })
@@ -78,9 +118,11 @@ async function getAdminDashboardStats(req, res, next) {
 
     const recentDonations = recentDonationDocs.map((d) => ({
       id: String(d._id),
-      createdAt: d.createdAt,
-      bloodType: d.bloodType,
-      units: d.units,
+      // use donation date if present, otherwise appointment creation time
+      createdAt: d.date || d.createdAt,
+      bloodType:
+        d.bloodType || (d.donor && d.donor.bloodType) || "Unknown",
+      units: d.unitsDonated || 1,
       donorName: d.donor?.name || "Unknown donor",
       locationName: d.location?.name || "Unknown location",
       locationCity: d.location?.city || "",
@@ -94,6 +136,9 @@ async function getAdminDashboardStats(req, res, next) {
         totalActiveRequests,
         totalSuccessfulDonations,
         emergencyActiveCount,
+        totalRequests,
+        pendingHighUrgencyCount,
+        requestStatusCounts,
       },
       recentEmergencies,
       recentDonations,

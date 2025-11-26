@@ -202,6 +202,7 @@ exports.getDonorAppointments = async (req, res, next) => {
 };
 
 // POST /api/donor/appointments
+// POST /api/donor/appointments
 exports.createDonationAppointment = async (req, res, next) => {
   try {
     const { locationId, date, timeSlot } = req.body;
@@ -217,15 +218,17 @@ exports.createDonationAppointment = async (req, res, next) => {
       return res.status(404).json({ message: "Blood bank not found." });
     }
 
+    // Parse and normalise selected date
     const selectedDate = new Date(date);
     if (Number.isNaN(selectedDate.getTime())) {
       return res.status(400).json({ message: "Invalid date provided." });
     }
+    selectedDate.setHours(0, 0, 0, 0);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    selectedDate.setHours(0, 0, 0, 0);
 
+    // Cannot book in the past (yesterday or earlier)
     if (selectedDate < today) {
       return res
         .status(400)
@@ -233,10 +236,63 @@ exports.createDonationAppointment = async (req, res, next) => {
     }
 
     const user = await User.findById(req.user._id);
-    const { eligible, reasons } = buildEligibility(
-      user,
-      user.nextEligibleDonationDate
-    );
+    if (!user) {
+      return res.status(404).json({ message: "Donor not found." });
+    }
+
+    // ---- Eligibility for this specific appointment date ----
+    const reasons = [];
+    let eligible = true;
+
+    // Basic health checks
+    if (user.age && user.age < 18) {
+      eligible = false;
+      reasons.push("You must be at least 18 years old to donate.");
+    }
+
+    if (user.age && user.age > 70) {
+      eligible = false;
+      reasons.push("Maximum donation age is 70 years.");
+    }
+
+    if (user.weight && user.weight < 40) {
+      eligible = false;
+      reasons.push("Weight must be at least 40 kg to donate.");
+    }
+
+    // Figure out the next eligible donation date
+    let nextEligibleDate = user.nextEligibleDonationDate || null;
+
+    if (!nextEligibleDate) {
+      const lastDonation = await DonationAppointment.findOne({
+        donor: user._id,
+        status: "COMPLETED",
+      })
+        .sort({ date: -1 })
+        .lean();
+
+      if (lastDonation && lastDonation.date) {
+        const d = new Date(lastDonation.date);
+        d.setDate(d.getDate() + 56); // 8-week gap
+        nextEligibleDate = d;
+        user.nextEligibleDonationDate = d;
+        await user.save();
+      }
+    }
+
+    // Now compare *selectedDate* vs nextEligibleDate (not vs today)
+    if (nextEligibleDate) {
+      const next = new Date(nextEligibleDate);
+      next.setHours(0, 0, 0, 0);
+
+      if (selectedDate < next) {
+        eligible = false;
+        reasons.push(
+          `You can only book an appointment on or after ${next.toLocaleDateString()} based on your last donation.`
+        );
+      }
+    }
+
     if (!eligible) {
       return res.status(400).json({
         message:
@@ -245,6 +301,7 @@ exports.createDonationAppointment = async (req, res, next) => {
       });
     }
 
+    // Prevent duplicate SCHEDULED appointment at same time slot
     const existing = await DonationAppointment.findOne({
       donor: user._id,
       date: selectedDate,
@@ -266,25 +323,25 @@ exports.createDonationAppointment = async (req, res, next) => {
     });
 
     const populated = await appointment.populate("location", "name city");
-    // Create notification for booked appointment
-try {
-  await Notification.create({
-    user: user._id,
-    role: "DONOR",
-    type: "APPOINTMENT_BOOKED",
-    title: "Donation appointment booked",
-    message: `Your appointment at ${location.name} on ${selectedDate.toLocaleDateString()} at ${timeSlot} has been booked.`,
-    meta: {
-      appointmentId: appointment._id,
-      locationName: location.name,
-      date: appointment.date,
-      timeSlot,
-    },
-  });
-} catch (notifyErr) {
-  console.error("Failed to create booking notification:", notifyErr);
-}
 
+    // Create notification for booked appointment
+    try {
+      await Notification.create({
+        user: user._id,
+        role: "DONOR",
+        type: "APPOINTMENT_BOOKED",
+        title: "Donation appointment booked",
+        message: `Your appointment at ${location.name} on ${selectedDate.toLocaleDateString()} at ${timeSlot} has been booked.`,
+        meta: {
+          appointmentId: appointment._id,
+          locationName: location.name,
+          date: appointment.date,
+          timeSlot,
+        },
+      });
+    } catch (notifyErr) {
+      console.error("Failed to create booking notification:", notifyErr);
+    }
 
     res.status(201).json({ appointment: serializeAppointment(populated) });
   } catch (err) {
@@ -292,6 +349,7 @@ try {
     next(err);
   }
 };
+
 
 // PATCH /api/donor/appointments/:id/cancel
 exports.cancelDonationAppointment = async (req, res, next) => {

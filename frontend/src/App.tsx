@@ -7,6 +7,12 @@ import { LoginPage } from "@/pages/auth/LoginPage";
 import { RegisterDonorPage } from "@/pages/auth/RegisterDonorPage";
 import { RegisterRecipientPage } from "@/pages/auth/RegisterRecipientPage";
 
+import { AboutPage } from "@/pages/AboutPage";
+import { HowItWorksPage } from "@/pages/HowItWorksPage";
+import { CompatibilityChartPage } from "@/pages/CompatibilityChartPage";
+import { HelpFaqPage } from "@/pages/HelpFaqPage";
+
+
 import { DonorDashboard } from "@/pages/Donor/DonorDashboard";
 import { DonateBloodPage } from "@/pages/Donor/DonateBloodPage";
 import { MyDonationsPage } from "@/pages/Donor/MyDonationsPage";
@@ -71,6 +77,16 @@ export default function App() {
           path="/register-recipient"
           element={<RegisterRecipientPage />}
         />
+
+                {/* Public info pages */}
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/how-it-works" element={<HowItWorksPage />} />
+        <Route
+          path="/compatibility-chart"
+          element={<CompatibilityChartPage />}
+        />
+        <Route path="/help" element={<HelpFaqPage />} />
+
 
         {/* Donor area */}
         <Route
