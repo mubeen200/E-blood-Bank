@@ -40,7 +40,7 @@ export function LoginPage() {
         <div className="text-center space-y-1">
           <h2 className="text-xl font-semibold">Sign in to E-BloodBank</h2>
           <p className="text-xs text-slate-300">
-            Select your role so we route you to the correct dashboard.
+            Select your role
           </p>
         </div>
 

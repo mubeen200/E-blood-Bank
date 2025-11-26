@@ -36,54 +36,86 @@ export function MainLayout({ children }: MainLayoutProps) {
     ? "/recipient/notifications"
     : "/";
 
+  const homePath = !isAuthenticated
+    ? "/"
+    : user?.role === "DONOR"
+    ? "/donor"
+    : user?.role === "RECIPIENT"
+    ? "/recipient"
+    : user?.role === "ADMIN"
+    ? "/admin"
+    : "/";
+
+  const portalLabel =
+    !user
+      ? ""
+      : user.role === "DONOR"
+      ? "Donor Portal"
+      : user.role === "RECIPIENT"
+      ? "Recipient Portal"
+      : user.role === "ADMIN"
+      ? "Admin Portal"
+      : "";
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-white">
       <header className="border-b border-slate-800 bg-gradient-to-r from-red-700 via-red-600 to-blue-700">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 gap-4">
-          {/* Logo + brand */}
-          <Link
-            to={
-              isAuthenticated && user?.role === "DONOR"
-                ? "/donor"
-                : isAuthenticated && user?.role === "RECIPIENT"
-                ? "/recipient"
-                : "/"
-            }
-            className="flex items-center gap-3"
-          >
-            <img
-              src="/logo.png"
-              alt="E-BloodBank Logo"
-              className="h-9 w-9 rounded-full border border-white/40 bg-white/90 object-contain shadow-sm"
-            />
-            <span className="text-lg font-semibold tracking-tight">
-              E-BloodBank
-            </span>
-          </Link>
+        <nav className="mx-auto max-w-6xl px-4 py-3 flex items-center gap-4">
+          {/* Left: Logo + brand */}
+          <div className="flex items-center">
+            <Link
+              to={homePath}
+              className="flex items-center gap-3"
+            >
+              <img
+                src="/logo.png"
+                alt="E-BloodBank Logo"
+                className="h-9 w-9 rounded-full border border-white/40 bg-white/90 object-contain shadow-sm"
+              />
+              <span className="text-lg font-semibold tracking-tight">
+                E-BloodBank
+              </span>
+            </Link>
+          </div>
 
-          {/* Center links: only for visitors (not logged in) */}
-          {!isAuthenticated && (
-            <div className="hidden md:flex items-center gap-6">
-              <Link to="/" className={navLinkClasses("/")}>
-                Home
-              </Link>
-              <Link to="/about" className={navLinkClasses("/about")}>
-                About Us
-              </Link>
-              <Link
-                to="/how-it-works"
-                className={navLinkClasses("/how-it-works")}
-              >
-                How It Works
-              </Link>
-              <Link
-                to="/compatibility-chart"
-                className={navLinkClasses("/compatibility-chart")}
-              >
-                Compatibility Chart
-              </Link>
-            </div>
-          )}
+          {/* Center: navigation / portal label */}
+          <div className="flex-1 flex justify-center">
+            {!isAuthenticated ? (
+              <div className="hidden md:flex items-center gap-6">
+                <Link to="/" className={navLinkClasses("/")}>
+                  Home
+                </Link>
+                <Link to="/about" className={navLinkClasses("/about")}>
+                  About Us
+                </Link>
+                <Link
+                  to="/how-it-works"
+                  className={navLinkClasses("/how-it-works")}
+                >
+                  How It Works
+                </Link>
+                <Link
+                  to="/compatibility-chart"
+                  className={navLinkClasses("/compatibility-chart")}
+                >
+                  Compatibility Chart
+                </Link>
+                <Link
+                  to="/help"
+                  className={navLinkClasses("/help")}
+                >
+                  Help &amp; FAQ
+                </Link>
+              </div>
+            ) : (
+              portalLabel && (
+                <div className="hidden md:inline-flex items-center gap-2 rounded-full bg-black/15 border border-white/25 px-4 py-1.5 text-[11px] uppercase tracking-[0.18em] text-slate-100/90">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.35)]" />
+                  <span>{portalLabel}</span>
+                </div>
+              )
+            )}
+          </div>
 
           {/* Right side actions */}
           <div className="flex items-center gap-3">
