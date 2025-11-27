@@ -4,19 +4,23 @@ const User = require("../models/User");
 const isProd = true;
 const JWT_SECRET = process.env.JWT_SECRET || "devsecret";
 
+
+const cookieOptions = {
+  httpOnly: true,
+  secure: isProd,                    // true in production (Render)
+  sameSite: isProd ? "none" : "lax", // "none" for cross-site in prod
+  path: "/",                         // important: explicit path
+};
+
 const signToken = (user) =>
   jwt.sign({ id: user._id, role: user.role }, JWT_SECRET, {
     expiresIn: "7d",
   });
 
 const sendAuthCookie = (res, token) => {
-  res.cookie("token", token, {
-  httpOnly: true,
-  secure: isProd,                      // true on Render
-  sameSite: isProd ? "none" : "lax",   // none for cross-site
-  // you usually do NOT need to set domain manually
-});
+  res.cookie("token", token, cookieOptions);
 };
+
 
 const sanitizeUser = (userDoc) => {
   const obj = userDoc.toObject();
@@ -226,10 +230,12 @@ exports.login = async (req, res, next) => {
 
 
 // POST /api/auth/logout
+// POST /api/auth/logout
 exports.logout = async (req, res) => {
-  res.clearCookie("token");
-  res.json({ message: "Logged out." });
+  res.clearCookie("token", cookieOptions);
+  return res.json({ message: "Logged out." });
 };
+
 
 // GET /api/auth/me
 exports.getMe = async (req, res) => {
