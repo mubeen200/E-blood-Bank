@@ -11,11 +11,11 @@ const signToken = (user) =>
 
 const sendAuthCookie = (res, token) => {
   res.cookie("token", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  httpOnly: true,
+  secure: isProd,                      // true on Render
+  sameSite: isProd ? "none" : "lax",   // none for cross-site
+  // you usually do NOT need to set domain manually
+});
 };
 
 const sanitizeUser = (userDoc) => {
