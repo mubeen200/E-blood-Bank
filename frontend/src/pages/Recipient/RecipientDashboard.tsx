@@ -262,21 +262,32 @@ export function RecipientDashboard() {
               </p>
             ) : (
               <div className="flex items-end gap-3 h-32">
-                {summary.trend.map((t) => (
-                  <div key={t.label} className="flex-1 flex flex-col items-center gap-1">
-                    <div className="flex-1 flex items-end w-full">
-                      <div
-                        className="w-full rounded-t-md bg-blue-500/80"
-                        style={{
-                          height:
-                            t.count === 0 ? "6px" : `${10 + t.count * 12}px`,
-                        }}
-                      />
-                    </div>
-                    <span className="text-[10px] text-slate-400">{t.label}</span>
-                    <span className="text-[11px] text-slate-200">{t.count}</span>
-                  </div>
-                ))}
+                {(() => {
+                  const maxCount = Math.max(
+                    1,
+                    ...summary.trend.map((pt) => pt.count)
+                  );
+                  return summary.trend.map((t) => {
+                    const pctHeight =
+                      t.count === 0
+                        ? 8
+                        : Math.max(15, Math.round((t.count / maxCount) * 100));
+                    return (
+                      <div key={t.label} className="flex-1 flex flex-col items-center gap-1 h-full">
+                        <div className="flex-1 flex items-end w-full">
+                          <div
+                            className="w-full rounded-t-md bg-blue-500/80"
+                            style={{
+                              height: `${pctHeight}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-slate-400">{t.label}</span>
+                        <span className="text-[11px] text-slate-200">{t.count}</span>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             )}
           </Card>

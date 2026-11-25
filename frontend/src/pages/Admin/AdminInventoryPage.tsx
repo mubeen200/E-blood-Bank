@@ -17,6 +17,7 @@ type InventoryItem = {
   bloodType: string;
   units: number;
   capacity: number;
+  level?: "EMPTY" | "LOW" | "MEDIUM" | "HIGH";
 };
 
 type LocationInventory = {
@@ -36,9 +37,18 @@ type InventoryResponse = {
 };
 
 function statusForInventory(item: InventoryItem) {
+  if (item.level) {
+    const labelMap = {
+      EMPTY: "Empty",
+      LOW: "Low",
+      MEDIUM: "Medium",
+      HIGH: "High",
+    } as const;
+    return { label: labelMap[item.level], level: item.level };
+  }
   const ratio = item.capacity > 0 ? item.units / item.capacity : 0;
-  if (item.units === 0) return { label: "Empty", level: "EMPTY" as const };
-  if (ratio < 0.25) return { label: "Low", level: "LOW" as const };
+  if (item.units <= 0) return { label: "Empty", level: "EMPTY" as const };
+  if (ratio < 0.4) return { label: "Low", level: "LOW" as const };
   if (ratio < 0.75) return { label: "Medium", level: "MEDIUM" as const };
   return { label: "High", level: "HIGH" as const };
 }

@@ -8,6 +8,7 @@ const donorRoutes = require("./routes/donorRoutes");
 const recipientRoutes = require("./routes/recipientRoutes");
 const seedAdmin = require("./utils/seedAdmin");
 const adminRoutes = require("./routes/adminRoutes");
+const { errorHandler } = require("./middleware/errorHandler");
 
 
 const app = express();
@@ -33,13 +34,7 @@ app.get("/api/health", (req, res) => {
 });
 
 // Global error handler
-// eslint-disable-next-line no-unused-vars
-app.use((err, req, res, next) => {
-  console.error("Unhandled error:", err);
-  res
-    .status(err.status || 500)
-    .json({ message: err.message || "Internal server error" });
-});
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 

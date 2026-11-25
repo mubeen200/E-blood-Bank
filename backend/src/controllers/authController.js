@@ -1,15 +1,19 @@
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
-const isProd = true;
-const JWT_SECRET = process.env.JWT_SECRET || "devsecret";
+const { BLOOD_TYPES } = require("../utils/inventoryHelper");
 
+// Cross-site cookies (Vercel <-> Render) require secure + sameSite: "none" in production,
+// while local HTTP dev requires secure: false + sameSite: "lax".
+const isProd =
+  process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
+const JWT_SECRET = process.env.JWT_SECRET || "devsecret";
 
 const cookieOptions = {
   httpOnly: true,
-  secure: isProd,                    // true in production (Render)
-  sameSite: isProd ? "none" : "lax", // "none" for cross-site in prod
-  path: "/",                         // important: explicit path
+  secure: isProd,
+  sameSite: isProd ? "none" : "lax",
+  path: "/",
 };
 
 const signToken = (user) =>
@@ -21,7 +25,6 @@ const sendAuthCookie = (res, token) => {
   res.cookie("token", token, cookieOptions);
 };
 
-
 const sanitizeUser = (userDoc) => {
   const obj = userDoc.toObject();
   delete obj.passwordHash;
@@ -30,9 +33,7 @@ const sanitizeUser = (userDoc) => {
 };
 
 // POST /api/auth/register-donor
-exports.registerDonor = async (req, res) => {
-  console.log("➡️  /api/auth/register-donor body:", req.body);
-
+exports.registerDonor = async (req, res, next) => {
   try {
     const {
       name,
@@ -53,7 +54,13 @@ exports.registerDonor = async (req, res) => {
       });
     }
 
-    if (password.length < 6) {
+    if (!BLOOD_TYPES.includes(bloodType)) {
+      return res.status(400).json({
+        message: "Invalid blood type.",
+      });
+    }
+
+    if (String(password).length < 6) {
       return res
         .status(400)
         .json({ message: "Password must be at least 6 characters long." });
@@ -81,7 +88,8 @@ exports.registerDonor = async (req, res) => {
       }
     }
 
-    const existing = await User.findOne({ email });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const existing = await User.findOne({ email: normalizedEmail });
     if (existing) {
       return res.status(400).json({ message: "Email already registered." });
     }
@@ -89,8 +97,8 @@ exports.registerDonor = async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await User.create({
-      name,
-      email,
+      name: String(name).trim(),
+      email: normalizedEmail,
       passwordHash,
       phone,
       gender,
@@ -105,22 +113,13 @@ exports.registerDonor = async (req, res) => {
     const token = signToken(user);
     sendAuthCookie(res, token);
 
-    console.log("✅ Donor created:", user._id.toString());
-
-    res.status(201).json({ user: sanitizeUser(user) });
+    return res.status(201).json({ user: sanitizeUser(user) });
   } catch (err) {
-    console.error("❌ registerDonor error:", err);
-
+    console.error("registerDonor error:", err);
     if (err.code === 11000 && err.keyPattern && err.keyPattern.email) {
       return res.status(400).json({ message: "Email already registered." });
     }
-
-    res.status(500).json({
-      message: "Server error while registering donor.",
-      // You can temporarily expose details while debugging;
-      // remove in production.
-      error: err.message,
-    });
+    return next(err);
   }
 };
 
@@ -135,7 +134,18 @@ exports.registerRecipient = async (req, res, next) => {
         .json({ message: "Name, email, password and blood type are required." });
     }
 
-    const existing = await User.findOne({ email });
+    if (!BLOOD_TYPES.includes(bloodType)) {
+      return res.status(400).json({ message: "Invalid blood type." });
+    }
+
+    if (String(password).length < 6) {
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 6 characters long." });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const existing = await User.findOne({ email: normalizedEmail });
     if (existing) {
       return res.status(400).json({ message: "Email already registered." });
     }
@@ -143,8 +153,8 @@ exports.registerRecipient = async (req, res, next) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await User.create({
-      name,
-      email,
+      name: String(name).trim(),
+      email: normalizedEmail,
       passwordHash,
       phone,
       gender,
@@ -156,37 +166,29 @@ exports.registerRecipient = async (req, res, next) => {
     const token = signToken(user);
     sendAuthCookie(res, token);
 
-    res.status(201).json({ user: sanitizeUser(user) });
+    return res.status(201).json({ user: sanitizeUser(user) });
   } catch (err) {
     console.error("registerRecipient error", err);
-    next(err);
+    return next(err);
   }
 };
 
 // POST /api/auth/login
 // body: { email, password, role? }
-// POST /api/auth/login
-// body: { email, password, role? }
 exports.login = async (req, res, next) => {
   try {
-    console.log("🔐 /api/auth/login body:", req.body);
-
     const { email, password, role } = req.body;
 
     if (!email || !password) {
-      console.log("⛔ Missing email or password");
       return res
         .status(400)
         .json({ message: "Email and password are required." });
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
-
-    // Find user ONLY by email (we'll *optionally* compare role later)
     const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
-      console.log("⛔ No user found for email:", normalizedEmail);
       return res
         .status(400)
         .json({ message: "Incorrect email or password.", code: "NO_USER" });
@@ -194,17 +196,12 @@ exports.login = async (req, res, next) => {
 
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
-      console.log("⛔ Invalid password for:", normalizedEmail);
       return res
         .status(400)
         .json({ message: "Incorrect email or password.", code: "BAD_PASSWORD" });
     }
 
-    // OPTIONAL – if frontend sends role, we check for mismatch
     if (role && role !== user.role) {
-      console.log(
-        `⚠️ Role mismatch when logging in: client=${role}, actual=${user.role} for ${normalizedEmail}`
-      );
       return res.status(400).json({
         message: `This account is registered as ${user.role}, but you selected ${role}.`,
         code: "ROLE_MISMATCH",
@@ -212,30 +209,21 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    // Use the same helpers you already have
     const token = signToken(user);
     sendAuthCookie(res, token);
-
-    console.log("✅ Login success for", normalizedEmail, "role:", user.role);
 
     return res.json({ user: sanitizeUser(user) });
   } catch (err) {
     console.error("Login error:", err);
-    next(err);
+    return next(err);
   }
 };
 
-
-
-
-
-// POST /api/auth/logout
 // POST /api/auth/logout
 exports.logout = async (req, res) => {
   res.clearCookie("token", cookieOptions);
   return res.json({ message: "Logged out." });
 };
-
 
 // GET /api/auth/me
 exports.getMe = async (req, res) => {

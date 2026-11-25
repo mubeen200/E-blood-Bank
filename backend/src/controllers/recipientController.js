@@ -1,9 +1,13 @@
 // backend/src/controllers/recipientController.js
-const Location = require("../models/Location");
+const BloodBankLocation = require("../models/BloodBankLocation");
 const Request = require("../models/Request");
 const User = require("../models/User");
 const bcrypt = require("bcrypt");
 const Notification = require("../models/Notification");
+const { getCompatibleDonorTypes } = require("../utils/compatibility");
+const { BLOOD_TYPES } = require("../utils/inventoryHelper");
+
+const URGENCY_LEVELS = ["LOW", "MEDIUM", "HIGH"];
 
 /**
  * POST /api/recipient/requests
@@ -26,49 +30,75 @@ exports.createBloodRequest = async (req, res, next) => {
       contactPhone,
     } = req.body;
 
-    if (!bloodType || !units || !urgency || !locationId) {
+    if (!bloodType || units === undefined || units === null || !urgency || !locationId) {
       return res.status(400).json({
         message: "Blood type, units, urgency and location are required.",
       });
     }
 
-    const location = await Location.findById(locationId);
-    if (!location) {
-      return res.status(400).json({ message: "Selected location not found." });
+    if (!BLOOD_TYPES.includes(bloodType)) {
+      return res.status(400).json({ message: "Invalid blood type." });
     }
 
-    // Simple stock check: if inventory array exists, check for matching bloodType
-    let hasStock = true;
-    if (Array.isArray(location.inventory) && location.inventory.length > 0) {
-      const entry = location.inventory.find((i) => i.bloodType === bloodType);
-      const available = entry ? entry.units || 0 : 0;
-      if (available < units) {
-        hasStock = false;
-      }
+    if (!URGENCY_LEVELS.includes(urgency)) {
+      return res.status(400).json({ message: "Invalid urgency level." });
     }
 
-    if (!hasStock) {
+    const unitsNum = Number(units);
+    if (!Number.isInteger(unitsNum) || unitsNum < 1) {
       return res.status(400).json({
-        message: `Selected location currently has no stock for ${bloodType}.`,
+        message: "Units needed must be a positive whole number.",
+      });
+    }
+
+    const location = await BloodBankLocation.findById(locationId).lean();
+    if (!location || location.isActive === false) {
+      return res.status(400).json({ message: "Selected location not found or inactive." });
+    }
+
+    // Strict stock check (no empty-inventory bypass) accounting for already-APPROVED reservations
+    const invArray = Array.isArray(location.inventory) ? location.inventory : [];
+    const entry = invArray.find((i) => i.bloodType === bloodType);
+    const available = entry && typeof entry.units === "number" ? entry.units : 0;
+
+    const reservedAgg = await Request.aggregate([
+      {
+        $match: {
+          location: location._id,
+          bloodType,
+          status: "APPROVED",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          reservedUnits: { $sum: "$units" },
+        },
+      },
+    ]);
+    const reserved = reservedAgg[0]?.reservedUnits || 0;
+    const unreserved = Math.max(0, available - reserved);
+
+    if (unreserved < unitsNum) {
+      return res.status(400).json({
+        message: `Selected location does not have enough available stock for ${bloodType} (available: ${unreserved}, requested: ${unitsNum}).`,
       });
     }
 
     const request = await Request.create({
       recipient: recipientId,
       bloodType,
-      units,
+      units: unitsNum,
       urgency,
       reason,
       location: location._id,
       status: "PENDING",
-
-      // emergency extras
       isEmergency: !!isEmergency,
       currentLocation: currentLocation?.trim() || undefined,
       contactPhone: contactPhone?.trim() || undefined,
     });
 
-    // 🔔 Create a notification for this recipient
+    // Notify recipient
     try {
       await Notification.create({
         user: recipientId,
@@ -76,7 +106,7 @@ exports.createBloodRequest = async (req, res, next) => {
         title: isEmergency
           ? "Emergency blood request submitted"
           : "Blood request submitted",
-        message: `${units} unit(s) of ${bloodType} requested at ${
+        message: `${unitsNum} unit(s) of ${bloodType} requested at ${
           location.name
         }${location.city ? " – " + location.city : ""}. Status: PENDING.`,
         type: isEmergency ? "EMERGENCY_REQUEST" : "REQUEST",
@@ -90,7 +120,50 @@ exports.createBloodRequest = async (req, res, next) => {
       });
     } catch (notifyErr) {
       console.error("Notification create error (recipient request):", notifyErr);
-      // don't fail the main request because of notifications
+    }
+
+    // Notify compatible donors for HIGH urgency / emergency requests
+    if (isEmergency || urgency === "HIGH") {
+      try {
+        const compatibleTypes = getCompatibleDonorTypes(bloodType);
+        if (compatibleTypes.length > 0) {
+          const matchingDonors = await User.find({
+            role: "DONOR",
+            bloodType: { $in: compatibleTypes },
+          })
+            .select("_id")
+            .limit(50)
+            .lean();
+
+          if (matchingDonors.length > 0) {
+            const donorNotifications = matchingDonors.map((d) => ({
+              user: d._id,
+              role: "DONOR",
+              type: "MATCHING_REQUEST",
+              title: isEmergency
+                ? `Urgent emergency need for ${bloodType}`
+                : `High-priority blood need for ${bloodType}`,
+              message: `${unitsNum} unit(s) of ${bloodType} needed at ${
+                location.name
+              }${location.city ? ", " + location.city : ""}. Your blood type is compatible!`,
+              link: "/donor/donate",
+              meta: {
+                requestId: request._id,
+                locationId: location._id,
+                locationName: location.name,
+                bloodType,
+                isEmergency: !!isEmergency,
+              },
+            }));
+            await Notification.insertMany(donorNotifications);
+          }
+        }
+      } catch (donorNotifyErr) {
+        console.error(
+          "Notification create error (matching donors):",
+          donorNotifyErr
+        );
+      }
     }
 
     res.status(201).json({
@@ -106,24 +179,25 @@ exports.createBloodRequest = async (req, res, next) => {
 /**
  * GET /api/recipient/locations
  * Query: ?bloodType=AB+
- * Returns locations that have >0 units for that bloodType (if inventory present)
+ * Returns active locations that have > 0 units for that bloodType.
  */
 exports.getLocationsForRecipient = async (req, res, next) => {
   try {
     const { bloodType } = req.query;
 
-    const locations = await Location.find({}).lean();
+    const locations = await BloodBankLocation.find({
+      isActive: { $ne: false },
+    }).lean();
 
     let filtered = locations;
 
     if (bloodType) {
       filtered = locations.filter((loc) => {
-        if (Array.isArray(loc.inventory) && loc.inventory.length > 0) {
-          const entry = loc.inventory.find((i) => i.bloodType === bloodType);
-          return entry && (entry.units || 0) > 0;
+        if (!Array.isArray(loc.inventory) || loc.inventory.length === 0) {
+          return false;
         }
-        // If no detailed inventory, keep it visible (admin-controlled)
-        return true;
+        const entry = loc.inventory.find((i) => i.bloodType === bloodType);
+        return Boolean(entry && (entry.units || 0) > 0);
       });
     }
 
@@ -132,7 +206,8 @@ exports.getLocationsForRecipient = async (req, res, next) => {
       name: loc.name,
       city: loc.city,
       address: loc.address,
-      contactNumber: loc.contactNumber,
+      phone: loc.phone || loc.contactNumber || "",
+      contactNumber: loc.phone || loc.contactNumber || "",
     }));
 
     res.json({ locations: mapped });
@@ -150,7 +225,6 @@ exports.getRecipientRequestHistory = async (req, res, next) => {
   try {
     const recipientId = req.user._id;
 
-    // Load all requests for this recipient
     const requests = await Request.find({ recipient: recipientId })
       .populate("location")
       .sort({ createdAt: -1 })
@@ -158,7 +232,13 @@ exports.getRecipientRequestHistory = async (req, res, next) => {
 
     const totalRequests = requests.length;
     const pending = requests.filter((r) => r.status === "PENDING").length;
-    const fulfilledList = requests.filter((r) => r.status === "FULFILLED");
+    const fulfilledList = requests
+      .filter((r) => r.status === "FULFILLED")
+      .sort((a, b) => {
+        const ta = new Date(a.fulfilledAt || a.updatedAt || a.createdAt).getTime();
+        const tb = new Date(b.fulfilledAt || b.updatedAt || b.createdAt).getTime();
+        return tb - ta;
+      });
     const fulfilled = fulfilledList.length;
     const totalUnitsRequested = requests.reduce(
       (sum, r) => sum + (r.units || 0),
@@ -167,7 +247,7 @@ exports.getRecipientRequestHistory = async (req, res, next) => {
 
     let lastReceived = null;
     if (fulfilledList.length > 0) {
-      const last = fulfilledList[0]; // because sorted desc
+      const last = fulfilledList[0];
       lastReceived = {
         bloodType: last.bloodType,
         units: last.units,
@@ -176,10 +256,10 @@ exports.getRecipientRequestHistory = async (req, res, next) => {
       };
     }
 
-    // Build simple date → totalUnits trend based on createdAt
+    // Build simple date -> totalUnits trend based on createdAt
     const trendMap = new Map();
     for (const r of requests) {
-      const dayKey = r.createdAt.toISOString().slice(0, 10); // YYYY-MM-DD
+      const dayKey = new Date(r.createdAt).toISOString().slice(0, 10);
       const prev = trendMap.get(dayKey) || 0;
       trendMap.set(dayKey, prev + (r.units || 0));
     }
@@ -251,7 +331,6 @@ async function getRecipientDashboardSummary(req, res, next) {
     const userId = req.user._id;
     const baseMatch = { recipient: userId };
 
-    // Basic counts
     const [totalRequests, activeRequests, completedRequests] = await Promise.all([
       Request.countDocuments(baseMatch),
       Request.countDocuments({
@@ -264,7 +343,6 @@ async function getRecipientDashboardSummary(req, res, next) {
       }),
     ]);
 
-    // Last completed / fulfilled request
     const last = await Request.findOne({
       recipient: userId,
       status: "FULFILLED",
@@ -284,7 +362,6 @@ async function getRecipientDashboardSummary(req, res, next) {
         }
       : null;
 
-    // Urgency breakdown
     const urgencyAgg = await Request.aggregate([
       { $match: baseMatch },
       {
@@ -305,7 +382,6 @@ async function getRecipientDashboardSummary(req, res, next) {
       }
     }
 
-    // Trend – last 6 months
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
 
@@ -346,7 +422,6 @@ async function getRecipientDashboardSummary(req, res, next) {
       });
     }
 
-    // Recent requests (for bottom-right card)
     const recentDocs = await Request.find(baseMatch)
       .populate("location", "name city")
       .sort({ createdAt: -1 })
@@ -385,14 +460,14 @@ exports.getRecipientDashboardSummary = getRecipientDashboardSummary;
 
 // ---------------- Notifications (recipient) ----------------
 
-/**
- * GET /api/recipient/notifications
- */
 exports.getRecipientNotifications = async (req, res, next) => {
   try {
     const userId = req.user._id;
 
-    const notifications = await Notification.find({ user: userId })
+    const notifications = await Notification.find({
+      user: userId,
+      role: "RECIPIENT",
+    })
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
@@ -406,16 +481,13 @@ exports.getRecipientNotifications = async (req, res, next) => {
   }
 };
 
-/**
- * PATCH /api/recipient/notifications/:id/read
- */
 exports.markRecipientNotificationRead = async (req, res, next) => {
   try {
     const userId = req.user._id;
     const { id } = req.params;
 
     const notif = await Notification.findOneAndUpdate(
-      { _id: id, user: userId },
+      { _id: id, user: userId, role: "RECIPIENT" },
       { isRead: true },
       { new: true }
     );
@@ -431,15 +503,12 @@ exports.markRecipientNotificationRead = async (req, res, next) => {
   }
 };
 
-/**
- * PATCH /api/recipient/notifications/read-all
- */
 exports.markAllRecipientNotificationsRead = async (req, res, next) => {
   try {
     const userId = req.user._id;
 
     await Notification.updateMany(
-      { user: userId, isRead: false },
+      { user: userId, role: "RECIPIENT", isRead: false },
       { isRead: true }
     );
 
@@ -452,9 +521,6 @@ exports.markAllRecipientNotificationsRead = async (req, res, next) => {
 
 // ---------------- Profile & password ----------------
 
-/**
- * GET /api/recipient/profile
- */
 exports.getRecipientProfile = async (req, res, next) => {
   try {
     const userId = req.user._id;
@@ -471,9 +537,6 @@ exports.getRecipientProfile = async (req, res, next) => {
   }
 };
 
-/**
- * PUT /api/recipient/profile
- */
 exports.updateRecipientProfile = async (req, res, next) => {
   try {
     const userId = req.user._id;
@@ -502,9 +565,6 @@ exports.updateRecipientProfile = async (req, res, next) => {
   }
 };
 
-/**
- * PUT /api/recipient/change-password
- */
 exports.changeRecipientPassword = async (req, res, next) => {
   try {
     const userId = req.user._id;

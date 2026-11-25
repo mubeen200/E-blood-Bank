@@ -1,18 +1,15 @@
 // backend/src/controllers/adminController.js
 const User = require("../models/User");
 const Request = require("../models/Request");
-const Location = require("../models/BloodBankLocation");
-const DonationAppointment = require("../models/DonationAppointment"); // donor appointments
-
-// Donation model is optional – if it's missing we just show 0 / no appointments
-let Donation = null;
-try {
-  Donation = require("../models/Donation");
-} catch (err) {
-  console.warn(
-    "AdminController: ../models/Donation not found. Donation stats & appointments will show 0."
-  );
-}
+const BloodBankLocation = require("../models/BloodBankLocation");
+const DonationAppointment = require("../models/DonationAppointment");
+const Notification = require("../models/Notification");
+const {
+  BLOOD_TYPES,
+  DEFAULT_CAPACITY,
+  classifyStockLevel,
+  escapeRegex,
+} = require("../utils/inventoryHelper");
 
 /**
  * GET /api/admin/dashboard
@@ -20,13 +17,22 @@ try {
  */
 async function getAdminDashboardStats(req, res, next) {
   try {
-    // --- Basic counts -------------------------------------------------------
+    const now = new Date();
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    // --- Basic counts + accurate 24h/7d activity ---------------------------
     const [
       totalDonors,
       totalRecipients,
       totalActiveRequests,
       emergencyActiveCount,
       pendingHighUrgencyCount,
+      emergenciesLast24h,
+      emergenciesLast7d,
+      donationsLast24h,
+      donationsLast7d,
+      emergencyLocationIds,
     ] = await Promise.all([
       User.countDocuments({ role: "DONOR" }),
       User.countDocuments({ role: "RECIPIENT" }),
@@ -40,6 +46,26 @@ async function getAdminDashboardStats(req, res, next) {
       Request.countDocuments({
         status: "PENDING",
         urgency: "HIGH",
+      }),
+      Request.countDocuments({
+        isEmergency: true,
+        createdAt: { $gte: oneDayAgo },
+      }),
+      Request.countDocuments({
+        isEmergency: true,
+        createdAt: { $gte: sevenDaysAgo },
+      }),
+      DonationAppointment.countDocuments({
+        status: "COMPLETED",
+        date: { $gte: oneDayAgo },
+      }),
+      DonationAppointment.countDocuments({
+        status: "COMPLETED",
+        date: { $gte: sevenDaysAgo },
+      }),
+      Request.distinct("location", {
+        isEmergency: true,
+        status: { $in: ["PENDING", "APPROVED"] },
       }),
     ]);
 
@@ -78,31 +104,22 @@ async function getAdminDashboardStats(req, res, next) {
       requestStatusCounts.CANCELLED;
 
     // --- Donation stats from DonationAppointment ---------------------------
-    let totalSuccessfulDonations = 0;
-    let recentDonationDocs = [];
-
-    totalSuccessfulDonations = await DonationAppointment.countDocuments({
-      status: "COMPLETED",
-    });
-
-    recentDonationDocs = await DonationAppointment.find({
-      status: "COMPLETED",
-    })
-      .sort({ date: -1, createdAt: -1 })
-      .limit(5)
-      .populate("donor", "name bloodType")
-      .populate("location", "name city")
-      .lean();
-
-    // --- Recent emergency requests -----------------------------------------
-    const recentEmergencyDocs = await Request.find({
-      isEmergency: true,
-    })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .populate("recipient", "name bloodType")
-      .populate("location", "name city")
-      .lean();
+    const [totalSuccessfulDonations, recentDonationDocs, recentEmergencyDocs] =
+      await Promise.all([
+        DonationAppointment.countDocuments({ status: "COMPLETED" }),
+        DonationAppointment.find({ status: "COMPLETED" })
+          .sort({ date: -1, createdAt: -1 })
+          .limit(5)
+          .populate("donor", "name bloodType")
+          .populate("location", "name city")
+          .lean(),
+        Request.find({ isEmergency: true })
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .populate("recipient", "name bloodType")
+          .populate("location", "name city")
+          .lean(),
+      ]);
 
     const recentEmergencies = recentEmergencyDocs.map((r) => ({
       id: String(r._id),
@@ -118,10 +135,8 @@ async function getAdminDashboardStats(req, res, next) {
 
     const recentDonations = recentDonationDocs.map((d) => ({
       id: String(d._id),
-      // use donation date if present, otherwise appointment creation time
       createdAt: d.date || d.createdAt,
-      bloodType:
-        d.bloodType || (d.donor && d.donor.bloodType) || "Unknown",
+      bloodType: d.bloodType || (d.donor && d.donor.bloodType) || "Unknown",
       units: d.unitsDonated || 1,
       donorName: d.donor?.name || "Unknown donor",
       locationName: d.location?.name || "Unknown location",
@@ -139,6 +154,15 @@ async function getAdminDashboardStats(req, res, next) {
         totalRequests,
         pendingHighUrgencyCount,
         requestStatusCounts,
+        recentActivity: {
+          emergenciesLast24h,
+          emergenciesLast7d,
+          donationsLast24h,
+          donationsLast7d,
+          locationsWithEmergencies: Array.isArray(emergencyLocationIds)
+            ? emergencyLocationIds.length
+            : 0,
+        },
       },
       recentEmergencies,
       recentDonations,
@@ -150,7 +174,7 @@ async function getAdminDashboardStats(req, res, next) {
 }
 
 // GET /api/admin/donors
-// List donors + latest appointment (scheduled/completed/cancelled)
+// List donors + prioritized active SCHEDULED appointment (or latest COMPLETED/CANCELLED)
 async function getAdminDonorsList(req, res, next) {
   try {
     const { search } = req.query;
@@ -158,7 +182,7 @@ async function getAdminDonorsList(req, res, next) {
     const filter = { role: "DONOR" };
 
     if (search && typeof search === "string" && search.trim()) {
-      const term = search.trim();
+      const term = escapeRegex(search.trim());
       const regex = new RegExp(term, "i");
 
       filter.$or = [
@@ -178,15 +202,18 @@ async function getAdminDonorsList(req, res, next) {
       const appts = await DonationAppointment.find({
         donor: { $in: donorIds },
       })
-        // we want latest by date/createdAt, regardless of status
         .populate("location", "name city")
         .sort({ date: -1, createdAt: -1 })
         .lean();
 
+      // Prioritize any active SCHEDULED appointment so admin can always mark it completed,
+      // even if a later CANCELLED appointment exists.
       for (const appt of appts) {
         const key = String(appt.donor);
-        // first one we see (because sorted desc) is the latest
-        if (!latestAppointmentByDonor.has(key)) {
+        const existing = latestAppointmentByDonor.get(key);
+        if (!existing) {
+          latestAppointmentByDonor.set(key, appt);
+        } else if (existing.status !== "SCHEDULED" && appt.status === "SCHEDULED") {
           latestAppointmentByDonor.set(key, appt);
         }
       }
@@ -236,17 +263,15 @@ async function getAdminDonorsList(req, res, next) {
 }
 
 // PATCH /api/admin/donor-appointments/:id/complete
-// Admin marks a scheduled appointment as completed
-// PATCH /api/admin/donor-appointments/:id/complete
-// Admin marks a scheduled appointment as completed AND increments inventory
+// Admin marks a scheduled appointment as completed, atomically increments inventory,
+// updates donor's totalDonations & 56-day nextEligibleDonationDate, and notifies donor.
 async function markDonationAppointmentCompleted(req, res, next) {
   try {
     const { id } = req.params;
 
-    // Load appointment with full location + donor blood type
     const appt = await DonationAppointment.findById(id)
-      .populate("location")                // full Location doc (incl. inventory)
-      .populate("donor", "bloodType");     // we need donor.bloodType
+      .populate("location")
+      .populate("donor", "bloodType name");
 
     if (!appt) {
       return res.status(404).json({ message: "Appointment not found." });
@@ -264,16 +289,15 @@ async function markDonationAppointmentCompleted(req, res, next) {
         .json({ message: "Cancelled appointment cannot be completed." });
     }
 
-    // Determine units donated (default 1 if not set)
-    if (!appt.unitsDonated || appt.unitsDonated <= 0) {
-      appt.unitsDonated = 1;
+    const rawUnits = req.body?.unitsDonated ?? appt.unitsDonated ?? 1;
+    const units = Number(rawUnits);
+    if (!Number.isInteger(units) || units < 1) {
+      return res
+        .status(400)
+        .json({ message: "Units donated must be a positive whole number." });
     }
-    const units = appt.unitsDonated;
 
-    // Which blood type are we adding back to inventory?
-    const bloodType =
-      (appt.donor && appt.donor.bloodType) || null;
-
+    const bloodType = (appt.donor && appt.donor.bloodType) || null;
     if (!bloodType) {
       return res.status(400).json({
         message:
@@ -281,7 +305,6 @@ async function markDonationAppointmentCompleted(req, res, next) {
       });
     }
 
-    // Update inventory at this location
     const locationDoc = appt.location;
     if (!locationDoc) {
       return res
@@ -289,36 +312,107 @@ async function markDonationAppointmentCompleted(req, res, next) {
         .json({ message: "Associated blood bank location not found." });
     }
 
-    // Find or create inventory row for this blood group
-    let slot = locationDoc.inventory.find(
-      (i) => i.bloodType === bloodType
-    );
-    if (!slot) {
-      // create a new entry with these units
-      locationDoc.inventory.push({
-        bloodType,
-        units,
-      });
+    const locationId = locationDoc._id || locationDoc;
+    const invArray = Array.isArray(locationDoc.inventory)
+      ? locationDoc.inventory
+      : [];
+    const existingSlot = invArray.find((i) => i.bloodType === bloodType);
+    const capacity =
+      existingSlot && typeof existingSlot.capacity === "number" && existingSlot.capacity > 0
+        ? existingSlot.capacity
+        : DEFAULT_CAPACITY;
+
+    // Enforce capacity & perform atomic inventory update to avoid lost updates
+    if (existingSlot) {
+      const currentUnits = existingSlot.units || 0;
+      if (currentUnits + units > capacity) {
+        return res.status(400).json({
+          message: `Cannot complete donation: adding ${units} unit(s) would exceed ${locationDoc.name}'s capacity for ${bloodType} (${currentUnits}/${capacity}).`,
+        });
+      }
+
+      const updatedLoc = await BloodBankLocation.findOneAndUpdate(
+        {
+          _id: locationId,
+          inventory: {
+            $elemMatch: {
+              bloodType,
+              units: { $lte: capacity - units },
+            },
+          },
+        },
+        {
+          $inc: { "inventory.$.units": units },
+        },
+        { new: true }
+      );
+
+      if (!updatedLoc) {
+        return res.status(400).json({
+          message: `Cannot complete donation: ${locationDoc.name} does not have enough remaining capacity for ${bloodType}.`,
+        });
+      }
     } else {
-      slot.units = (slot.units || 0) + units;
+      if (units > capacity) {
+        return res.status(400).json({
+          message: `Cannot complete donation: ${units} unit(s) exceeds capacity (${capacity}) for ${bloodType}.`,
+        });
+      }
+
+      await BloodBankLocation.findByIdAndUpdate(
+        locationId,
+        {
+          $push: {
+            inventory: { bloodType, units, capacity },
+          },
+        },
+        { new: true }
+      );
     }
 
-    // Mark appointment completed
+    appt.unitsDonated = units;
     appt.status = "COMPLETED";
 
-    // Increment donor's totalDonations counter
-    const donorId =
-      appt.donor && (appt.donor._id || appt.donor);
+    const donorId = appt.donor && (appt.donor._id || appt.donor);
+
+    // Always recalculate 56-day cooldown from this completed donation's date
+    const nextEligible = new Date(appt.date || Date.now());
+    nextEligible.setHours(0, 0, 0, 0);
+    nextEligible.setDate(nextEligible.getDate() + 56);
 
     await Promise.all([
       appt.save(),
-      locationDoc.save(),
       donorId
         ? User.findByIdAndUpdate(donorId, {
-            $inc: { totalDonations: units },
+            $inc: { totalDonations: 1 },
+            $set: { nextEligibleDonationDate: nextEligible },
           })
         : Promise.resolve(),
     ]);
+
+    // Notify donor of completed donation
+    if (donorId) {
+      try {
+        await Notification.create({
+          user: donorId,
+          role: "DONOR",
+          type: "DONATION_COMPLETED",
+          title: "Donation completed — thank you!",
+          message: `Your donation of ${units} unit(s) of ${bloodType} at ${
+            locationDoc.name || "the blood bank"
+          } has been recorded. Next eligible date: ${nextEligible.toLocaleDateString()}.`,
+          meta: {
+            appointmentId: appt._id,
+            locationName: locationDoc.name,
+            date: appt.date,
+            timeSlot: appt.timeSlot,
+            unitsDonated: units,
+          },
+        });
+      } catch (notifyErr) {
+        console.error("Failed to create DONATION_COMPLETED notification:", notifyErr);
+      }
+    }
 
     return res.json({
       appointment: {
@@ -338,7 +432,6 @@ async function markDonationAppointmentCompleted(req, res, next) {
   }
 }
 
-
 /**
  * GET /api/admin/recipients
  * List all RECIPIENT users with basic stats + their active requests
@@ -351,7 +444,7 @@ async function getAdminRecipientsList(req, res, next) {
     const filter = { role: "RECIPIENT" };
 
     if (search && typeof search === "string" && search.trim()) {
-      const term = search.trim();
+      const term = escapeRegex(search.trim());
       const regex = new RegExp(term, "i");
 
       filter.$or = [
@@ -369,7 +462,6 @@ async function getAdminRecipientsList(req, res, next) {
     const activeByRecipient = new Map();
 
     if (recipientIds.length > 0) {
-      // Aggregate basic stats (total / active / fulfilled)
       const statsAgg = await Request.aggregate([
         {
           $match: {
@@ -406,7 +498,6 @@ async function getAdminRecipientsList(req, res, next) {
         });
       }
 
-      // Load active requests (PENDING / APPROVED)
       const activeReqDocs = await Request.find({
         recipient: { $in: recipientIds },
         status: { $in: ["PENDING", "APPROVED"] },
@@ -435,12 +526,11 @@ async function getAdminRecipientsList(req, res, next) {
 
     const result = recipients.map((rec) => {
       const key = String(rec._id);
-      const stats =
-        statsByRecipient.get(key) || {
-          totalRequests: 0,
-          activeRequestsCount: 0,
-          fulfilledRequests: 0,
-        };
+      const stats = statsByRecipient.get(key) || {
+        totalRequests: 0,
+        activeRequestsCount: 0,
+        fulfilledRequests: 0,
+      };
 
       return {
         id: key,
@@ -471,9 +561,9 @@ async function getAdminRecipientsList(req, res, next) {
  * PATCH /api/admin/requests/:id/status
  *
  * Body options:
- *  - { status: "APPROVED" }      -> approve (no inventory change)
+ *  - { status: "APPROVED" }      -> approve (validates unreserved stock availability)
  *  - { status: "REJECTED" }      -> reject
- *  - { action: "COMPLETE" }      -> mark completed (FULFILLED) AND decrement inventory
+ *  - { action: "COMPLETE" }      -> mark completed (FULFILLED) AND atomically decrement inventory
  *  - { status: "FULFILLED" }     -> treated the same as action COMPLETE
  */
 async function adminUpdateRequestStatus(req, res, next) {
@@ -490,7 +580,6 @@ async function adminUpdateRequestStatus(req, res, next) {
       return res.status(404).json({ message: "Request not found." });
     }
 
-    // Once fulfilled / rejected / cancelled, don't touch it
     if (["FULFILLED", "REJECTED", "CANCELLED"].includes(request.status)) {
       return res.status(400).json({
         message: "This request can no longer be updated.",
@@ -500,7 +589,11 @@ async function adminUpdateRequestStatus(req, res, next) {
     const normalizedAction = action ? String(action).toUpperCase() : null;
     const normalizedStatus = status ? String(status).toUpperCase() : null;
 
-    // Helper to perform completion + inventory decrement
+    const locationId =
+      request.location && request.location._id
+        ? request.location._id
+        : request.location;
+
     const completeRequest = async () => {
       if (request.status !== "APPROVED") {
         return res.status(400).json({
@@ -508,60 +601,141 @@ async function adminUpdateRequestStatus(req, res, next) {
         });
       }
 
-      const locationId =
-        request.location && request.location._id
-          ? request.location._id
-          : request.location;
-
-      const locationDoc = await Location.findById(locationId);
-      if (!locationDoc) {
-        return res
-          .status(400)
-          .json({ message: "Associated blood bank location not found." });
-      }
-
       const bloodType = request.bloodType;
       const unitsRequested = request.units || 0;
 
-      const inventoryItem = locationDoc.inventory.find(
-        (i) => i.bloodType === bloodType
+      // Atomic stock check + decrement prevents race conditions / negative stock
+      const updatedLocation = await BloodBankLocation.findOneAndUpdate(
+        {
+          _id: locationId,
+          inventory: {
+            $elemMatch: {
+              bloodType,
+              units: { $gte: unitsRequested },
+            },
+          },
+        },
+        {
+          $inc: { "inventory.$.units": -unitsRequested },
+        },
+        { new: true }
       );
-      const availableUnits = inventoryItem?.units ?? 0;
 
-      if (!inventoryItem || availableUnits < unitsRequested) {
+      if (!updatedLocation) {
+        const locationDoc = await BloodBankLocation.findById(locationId).lean();
+        if (!locationDoc) {
+          return res
+            .status(400)
+            .json({ message: "Associated blood bank location not found." });
+        }
+        const inventoryItem = (locationDoc.inventory || []).find(
+          (i) => i.bloodType === bloodType
+        );
+        const availableUnits = inventoryItem?.units ?? 0;
         return res.status(400).json({
           message: `Not enough stock for ${bloodType} at ${locationDoc.name}. Available: ${availableUnits}, required: ${unitsRequested}.`,
         });
       }
 
-      // Decrement stock only on COMPLETE ✔️
-      inventoryItem.units = availableUnits - unitsRequested;
-
       request.status = "FULFILLED";
       request.fulfilledAt = new Date();
-
-      await Promise.all([locationDoc.save(), request.save()]);
+      await request.save();
 
       return null;
     };
 
-    // Decide what to do
     if (
       normalizedAction === "COMPLETE" ||
       normalizedAction === "FULFILL" ||
       normalizedStatus === "FULFILLED"
     ) {
       const errorResponse = await completeRequest();
-      if (errorResponse) return; // completion already sent an error response
-    } else if (normalizedStatus === "APPROVED" || normalizedStatus === "REJECTED") {
-      // Simple approve / reject
-      request.status = normalizedStatus;
+      if (errorResponse) return;
+    } else if (normalizedStatus === "APPROVED") {
+      if (request.status !== "PENDING") {
+        return res.status(400).json({
+          message: "Only PENDING requests can be approved.",
+        });
+      }
+
+      // Prevent overbooking: ensure (stock - already APPROVED units) >= request.units
+      const [locationDoc, reservedAgg] = await Promise.all([
+        BloodBankLocation.findById(locationId).lean(),
+        Request.aggregate([
+          {
+            $match: {
+              _id: { $ne: request._id },
+              location: locationId,
+              bloodType: request.bloodType,
+              status: "APPROVED",
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              reservedUnits: { $sum: "$units" },
+            },
+          },
+        ]),
+      ]);
+
+      if (!locationDoc) {
+        return res
+          .status(400)
+          .json({ message: "Associated blood bank location not found." });
+      }
+
+      const inventoryItem = (locationDoc.inventory || []).find(
+        (i) => i.bloodType === request.bloodType
+      );
+      const availableUnits = inventoryItem?.units ?? 0;
+      const reservedUnits = reservedAgg[0]?.reservedUnits || 0;
+      const unreservedUnits = availableUnits - reservedUnits;
+
+      if (unreservedUnits < request.units) {
+        return res.status(400).json({
+          message: `Not enough unreserved stock to approve ${request.units} unit(s) of ${request.bloodType} at ${locationDoc.name}. Available: ${availableUnits}, already reserved: ${reservedUnits}.`,
+        });
+      }
+
+      request.status = "APPROVED";
+      await request.save();
+    } else if (normalizedStatus === "REJECTED") {
+      request.status = "REJECTED";
       await request.save();
     } else {
       return res.status(400).json({
         message:
           "Status must be APPROVED or REJECTED, or action must be COMPLETE.",
       });
+    }
+
+    // Notify recipient of status change
+    try {
+      const locationName = request.location?.name || "the blood bank";
+      const statusLabel =
+        request.status === "APPROVED"
+          ? "approved"
+          : request.status === "FULFILLED"
+          ? "fulfilled"
+          : "rejected";
+
+      await Notification.create({
+        user: request.recipient,
+        role: "RECIPIENT",
+        type: request.isEmergency ? "EMERGENCY_REQUEST" : "REQUEST",
+        title: `Blood request ${statusLabel}`,
+        message: `Your request for ${request.units} unit(s) of ${request.bloodType} at ${locationName} has been ${statusLabel}.`,
+        link: "/recipient/requests",
+        meta: {
+          requestId: request._id,
+          locationId,
+          status: request.status,
+          isEmergency: !!request.isEmergency,
+        },
+      });
+    } catch (notifyErr) {
+      console.error("Failed to create recipient status notification:", notifyErr);
     }
 
     return res.json({
@@ -589,47 +763,29 @@ async function adminUpdateRequestStatus(req, res, next) {
 // GET /api/admin/inventory
 async function getAdminInventoryByLocation(req, res, next) {
   try {
-    const BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
-
-    const locations = await Location.find({}).sort({ name: 1 }).lean();
+    const locations = await BloodBankLocation.find({}).sort({ name: 1 }).lean();
 
     const result = locations.map((loc) => {
       const inventoryArray = Array.isArray(loc.inventory) ? loc.inventory : [];
 
-      // map by bloodType
       const invMap = new Map();
       for (const row of inventoryArray) {
         if (!row || !row.bloodType) continue;
         invMap.set(row.bloodType, row);
       }
 
+      let lowOrEmptyCount = 0;
       const inventory = BLOOD_TYPES.map((bt) => {
         const row = invMap.get(bt) || {};
-        const units = typeof row.units === "number" ? row.units : 0;
-        const capacity =
-          typeof row.capacity === "number" && row.capacity > 0
-            ? row.capacity
-            : 50; // default capacity
-
-        const utilization = capacity > 0 ? units / capacity : 0;
-
-        let level = "EMPTY";
-        if (units <= 0) {
-          level = "EMPTY";
-        } else if (utilization < 0.4) {
-          level = "LOW";
-        } else if (utilization < 0.7) {
-          level = "MEDIUM";
-        } else {
-          level = "HIGH";
-        }
+        const classified = classifyStockLevel(row.units, row.capacity);
+        if (classified.isLowOrEmpty) lowOrEmptyCount += 1;
 
         return {
           bloodType: bt,
-          units,
-          capacity,
-          utilizationPct: utilization,
-          level, // "EMPTY" | "LOW" | "MEDIUM" | "HIGH"
+          units: classified.units,
+          capacity: classified.capacity,
+          utilizationPct: classified.utilizationPct,
+          level: classified.level,
         };
       });
 
@@ -643,11 +799,15 @@ async function getAdminInventoryByLocation(req, res, next) {
         phone: loc.phone || "",
         isActive: loc.isActive !== false,
         totalUnits,
+        lowOrEmptyCount,
         inventory,
       };
     });
 
-    return res.json({ locations: result });
+    return res.json({
+      locations: result,
+      totalLocations: result.length,
+    });
   } catch (err) {
     console.error("getAdminInventoryByLocation error", err);
     next(err);
@@ -658,7 +818,6 @@ async function getDonationRecords(req, res, next) {
   try {
     const { search, limit } = req.query;
 
-    // how many records to load at most (safety cap)
     const max = Math.min(parseInt(limit, 10) || 200, 500);
 
     let docs = await DonationAppointment.find({
@@ -670,7 +829,6 @@ async function getDonationRecords(req, res, next) {
       .limit(max)
       .lean();
 
-    // Optional text search on donor / location
     if (search && typeof search === "string" && search.trim()) {
       const term = search.trim().toLowerCase();
       docs = docs.filter((doc) => {
@@ -716,40 +874,52 @@ async function getDonationRecords(req, res, next) {
 async function getAdminReportsAnalytics(req, res, next) {
   try {
     const now = new Date();
-    // last 6 calendar months including current
     const start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
-    // ---------- 1. Donations (completed appointments) ----------
-    const donationsAgg = await DonationAppointment.aggregate([
-      {
-        $match: {
-          status: "COMPLETED",
-          date: { $gte: start },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            year: { $year: "$date" },
-            month: { $month: "$date" },
-          },
-          donations: { $sum: 1 },
-          units: {
-            $sum: {
-              $cond: [
-                { $gt: ["$unitsDonated", 0] },
-                "$unitsDonated",
-                1,
-              ],
+    // ---------- 1. Donations: all-time summary + last 6 months trend ----------
+    const [allTimeDonationsAgg, donationsAgg] = await Promise.all([
+      DonationAppointment.aggregate([
+        { $match: { status: "COMPLETED" } },
+        {
+          $group: {
+            _id: null,
+            donations: { $sum: 1 },
+            units: {
+              $sum: {
+                $cond: [{ $gt: ["$unitsDonated", 0] }, "$unitsDonated", 1],
+              },
             },
           },
         },
-      },
-      { $sort: { "_id.year": 1, "_id.month": 1 } },
+      ]),
+      DonationAppointment.aggregate([
+        {
+          $match: {
+            status: "COMPLETED",
+            date: { $gte: start },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$date" },
+              month: { $month: "$date" },
+            },
+            donations: { $sum: 1 },
+            units: {
+              $sum: {
+                $cond: [{ $gt: ["$unitsDonated", 0] }, "$unitsDonated", 1],
+              },
+            },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1 } },
+      ]),
     ]);
 
-    let totalDonations = 0;
-    let totalUnitsDonated = 0;
+    const totalDonations = allTimeDonationsAgg[0]?.donations || 0;
+    const totalUnitsDonated = allTimeDonationsAgg[0]?.units || 0;
+
     const donationsMap = new Map();
     for (const row of donationsAgg) {
       const key = `${row._id.year}-${row._id.month}`;
@@ -757,8 +927,6 @@ async function getAdminReportsAnalytics(req, res, next) {
         donations: row.donations,
         units: row.units,
       });
-      totalDonations += row.donations;
-      totalUnitsDonated += row.units;
     }
 
     const monthlyDonations = [];
@@ -775,7 +943,7 @@ async function getAdminReportsAnalytics(req, res, next) {
       });
     }
 
-    // ---------- 2. Requests (all statuses, last 6 months) ----------
+    // ---------- 2. Requests (last 6 months trend) ----------
     const requestsAgg = await Request.aggregate([
       {
         $match: {
@@ -805,8 +973,6 @@ async function getAdminReportsAnalytics(req, res, next) {
     ]);
 
     const requestsMap = new Map();
-    let totalRequests = 0;
-    let fulfilledRequests = 0;
     for (const row of requestsAgg) {
       const key = `${row._id.year}-${row._id.month}`;
       requestsMap.set(key, {
@@ -814,16 +980,17 @@ async function getAdminReportsAnalytics(req, res, next) {
         fulfilled: row.fulfilled,
         emergency: row.emergency,
       });
-      totalRequests += row.total;
-      fulfilledRequests += row.fulfilled;
     }
 
     const monthlyRequests = [];
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
-      const base =
-        requestsMap.get(key) || { total: 0, fulfilled: 0, emergency: 0 };
+      const base = requestsMap.get(key) || {
+        total: 0,
+        fulfilled: 0,
+        emergency: 0,
+      };
 
       monthlyRequests.push({
         year: d.getFullYear(),
@@ -835,7 +1002,7 @@ async function getAdminReportsAnalytics(req, res, next) {
       });
     }
 
-    // ---------- 3. Blood group request breakdown ----------
+    // ---------- 3. Blood group request breakdown (all-time) ----------
     const bloodGroupAgg = await Request.aggregate([
       {
         $group: {
@@ -853,7 +1020,7 @@ async function getAdminReportsAnalytics(req, res, next) {
         count: row.count,
       }));
 
-    // ---------- 4. Status counts / success rate ----------
+    // ---------- 4. All-time status counts & consistent summary ----------
     const statusAgg = await Request.aggregate([
       {
         $group: {
@@ -876,14 +1043,11 @@ async function getAdminReportsAnalytics(req, res, next) {
       }
     }
 
-    if (!totalRequests) {
-      // if no requests in last 6 months, compute total from statusAgg instead
-      totalRequests = Object.values(statusCounts).reduce(
-        (sum, v) => sum + v,
-        0
-      );
-      fulfilledRequests = statusCounts.FULFILLED || 0;
-    }
+    const totalRequests = Object.values(statusCounts).reduce(
+      (sum, v) => sum + v,
+      0
+    );
+    const fulfilledRequests = statusCounts.FULFILLED || 0;
 
     const successRate =
       totalRequests > 0
@@ -911,8 +1075,6 @@ async function getAdminReportsAnalytics(req, res, next) {
   }
 }
 
-// --------------- keep existing exports, just add getDonationRecords ---------------
-
 module.exports = {
   getAdminDashboardStats,
   getAdminDonorsList,
@@ -921,5 +1083,5 @@ module.exports = {
   adminUpdateRequestStatus,
   getAdminInventoryByLocation,
   getDonationRecords,
-  getAdminReportsAnalytics, // 👈 NEW   
+  getAdminReportsAnalytics,
 };

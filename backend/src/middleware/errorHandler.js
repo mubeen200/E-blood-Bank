@@ -8,16 +8,21 @@ exports.errorHandler = (err, req, res, next) => {
     return res.status(400).json({ message: messages.join(" ") });
   }
 
+  // Invalid MongoDB ObjectId
+  if (err.name === "CastError") {
+    return res.status(400).json({ message: `Invalid ${err.path || "ID"} format.` });
+  }
+
   // Duplicate key (e.g. unique email)
   if (err.code === 11000) {
     const field = Object.keys(err.keyValue || {})[0] || "field";
     return res
       .status(400)
-      .json({ message: `A user with this ${field} already exists.` });
+      .json({ message: `A record with this ${field} already exists.` });
   }
 
-  const status = err.statusCode || 500;
-  const message = err.message || "Server error.";
+  const status = err.status || err.statusCode || 500;
+  const message = err.message || "Internal server error.";
 
   res.status(status).json({ message });
 };

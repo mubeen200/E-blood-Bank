@@ -177,6 +177,9 @@ export function AdminRecipientsPage() {
               0,
               (current.activeRequestsCount || 0) - 1
             );
+            if (newStatus === "FULFILLED") {
+              current.fulfilledRequests = (current.fulfilledRequests || 0) + 1;
+            }
           } else {
             // APPROVED – keep in list, just update status
             list[idx] = { ...list[idx], status: updated.status };

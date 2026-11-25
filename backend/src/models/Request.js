@@ -33,7 +33,7 @@ const requestSchema = new Schema(
 
     location: {
       type: Schema.Types.ObjectId,
-      ref: "Location",
+      ref: "BloodBankLocation",
       required: true,
     },
 

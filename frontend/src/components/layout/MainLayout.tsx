@@ -121,15 +121,16 @@ export function MainLayout({ children }: MainLayoutProps) {
           <div className="flex items-center gap-3">
             {isAuthenticated ? (
               <>
-                {/* Notification bell → opens correct notifications page */}
-                <Link
-                  to={notificationPath}
-                  className="relative rounded-full bg-white/10 p-2 hover:bg-white/20 border border-white/30"
-                  aria-label="Notifications"
-                >
-                  <Bell className="h-4 w-4" />
-                  <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-amber-400 border border-slate-900" />
-                </Link>
+                {/* Notification bell → only for roles with a notifications page */}
+                {user && (user.role === "DONOR" || user.role === "RECIPIENT") && (
+                  <Link
+                    to={notificationPath}
+                    className="relative rounded-full bg-white/10 p-2 hover:bg-white/20 border border-white/30"
+                    aria-label="Notifications"
+                  >
+                    <Bell className="h-4 w-4" />
+                  </Link>
+                )}
 
                 <Button
                   onClick={logout}

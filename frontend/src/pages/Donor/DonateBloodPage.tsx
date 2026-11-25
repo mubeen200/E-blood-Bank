@@ -68,7 +68,7 @@ export function DonateBloodPage() {
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Compute min allowed date for appointment:
+  // Compute min allowed date for appointment in local timezone (avoid UTC shift):
   const minDate = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -79,7 +79,10 @@ export function DonateBloodPage() {
       next.setHours(0, 0, 0, 0);
       if (next > min) min = next;
     }
-    return min.toISOString().slice(0, 10);
+    const y = min.getFullYear();
+    const m = String(min.getMonth() + 1).padStart(2, "0");
+    const d = String(min.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }, [overview]);
 
   useEffect(() => {

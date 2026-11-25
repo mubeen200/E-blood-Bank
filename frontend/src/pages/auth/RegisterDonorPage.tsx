@@ -208,7 +208,7 @@ export function RegisterDonorPage() {
                   id="age"
                   type="number"
                   min={18}
-                  max={65}
+                  max={70}
                   value={age}
                   onChange={(e) => setAge(e.target.value)}
                   className="bg-slate-950 border-slate-700 text-white"

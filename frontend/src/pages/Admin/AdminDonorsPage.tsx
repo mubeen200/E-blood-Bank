@@ -137,8 +137,7 @@ export function AdminDonorsPage() {
         prev.map((d) => {
           if (d.id !== donorId && d.id !== updated.donorId) return d;
 
-          const newTotal =
-            (d.totalDonations || 0) + (updated.unitsDonated || 1);
+          const newTotal = (d.totalDonations || 0) + 1;
 
           return {
             ...d,

@@ -29,6 +29,13 @@ type Stats = {
   totalRequests?: number;
   pendingHighUrgencyCount?: number;
   requestStatusCounts?: RequestStatusCounts;
+  recentActivity?: {
+    emergenciesLast24h: number;
+    emergenciesLast7d: number;
+    donationsLast24h: number;
+    donationsLast7d: number;
+    locationsWithEmergencies: number;
+  };
 };
 
 type RecentEmergency = {
@@ -139,38 +146,49 @@ export function AdminDashboard() {
 
   const pendingHighUrgency = stats?.pendingHighUrgencyCount ?? 0;
 
-  // recent activity counters (from the last few items we have)
+  // recent activity counters (prefer accurate backend counts, fallback to recent lists)
   const now = new Date();
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
   const emergenciesLast24h =
+    stats?.recentActivity?.emergenciesLast24h ??
     data?.recentEmergencies.filter(
       (e) => new Date(e.createdAt) >= oneDayAgo
-    ).length ?? 0;
+    ).length ??
+    0;
 
   const donationsLast24h =
+    stats?.recentActivity?.donationsLast24h ??
     data?.recentDonations.filter(
       (d) => new Date(d.createdAt) >= oneDayAgo
-    ).length ?? 0;
+    ).length ??
+    0;
 
   const emergenciesLast7d =
+    stats?.recentActivity?.emergenciesLast7d ??
     data?.recentEmergencies.filter(
       (e) => new Date(e.createdAt) >= sevenDaysAgo
-    ).length ?? 0;
+    ).length ??
+    0;
 
   const donationsLast7d =
+    stats?.recentActivity?.donationsLast7d ??
     data?.recentDonations.filter(
       (d) => new Date(d.createdAt) >= sevenDaysAgo
-    ).length ?? 0;
+    ).length ??
+    0;
 
   const locationsWithEmergencies = useMemo(() => {
+    if (stats?.recentActivity?.locationsWithEmergencies !== undefined) {
+      return stats.recentActivity.locationsWithEmergencies;
+    }
     const set = new Set<string>();
     data?.recentEmergencies.forEach((e) => {
       if (e.locationName) set.add(e.locationName);
     });
     return set.size;
-  }, [data]);
+  }, [data, stats]);
 
   const emergencyShareActive =
     stats && stats.totalActiveRequests

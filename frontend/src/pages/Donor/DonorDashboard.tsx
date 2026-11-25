@@ -20,6 +20,7 @@ type Overview = {
   nextEligibleDonationDate: string | null;
   stats: {
     totalDonations: number;
+    totalUnitsDonated?: number;
     upcomingAppointments: number;
   };
 };
@@ -104,7 +105,7 @@ export function DonorDashboard() {
       .filter((a) => a.status === "COMPLETED")
       .forEach((a) => {
         const d = new Date(a.date);
-        const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
         map.set(key, (map.get(key) || 0) + 1);
       });
 
@@ -264,7 +265,7 @@ export function DonorDashboard() {
             </div>
             <div className="text-2xl font-bold">{totalDonations}</div>
             <p className="text-[11px] text-slate-300 mt-1">
-              Units donated: {totalDonations}
+              Units donated: {overview?.stats.totalUnitsDonated ?? totalDonations}
             </p>
           </Card>
 

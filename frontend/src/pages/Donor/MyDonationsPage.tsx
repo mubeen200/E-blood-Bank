@@ -118,7 +118,7 @@ export function MyDonationsPage() {
 
     completed.forEach((d) => {
       const dt = new Date(d.date);
-      const key = `${dt.getFullYear()}-${dt.getMonth() + 1}`;
+      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
       map.set(key, (map.get(key) || 0) + 1);
     });
 
